@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 
 export interface LLMIntent {
-  action: 'info' | 'file' | 'search' | 'commits' | 'issues' | 'list' | 'team' | 'collaborators' | 'contributors' | 'linear_issues' | 'linear_create' | 'linear_update' | 'linear_assign' | 'linear_comment' | 'linear_teams' | 'linear_projects' | 'linear_search' | 'linear_state' | 'browse' | 'structure' | 'tree' | 'find_usage' | 'general' | 'github_issue' | 'user_work';
+  action: 'info' | 'file' | 'search' | 'commits' | 'issues' | 'list' | 'team' | 'collaborators' | 'contributors' | 'linear_issues' | 'linear_create' | 'linear_update' | 'linear_assign' | 'linear_comment' | 'linear_teams' | 'linear_projects' | 'linear_search' | 'linear_state' | 'browse' | 'structure' | 'tree' | 'find_usage' | 'general' | 'github_issue' | 'user_work' | 'work_conflict_check';
   parameters: {
     filePath?: string;
     searchTerm?: string;
@@ -24,6 +24,8 @@ export interface LLMIntent {
     moduleName?: string;
     // User work parameters
     username?: string;
+    // Work conflict check parameters
+    proposedWork?: string;
   };
   confidence: number;
 }
@@ -52,8 +54,8 @@ export class LLMService {
       }
       const systemPrompt = `You are a helpful assistant that understands questions about GitHub repositories and Linear project management.
 Analyze the user's question and determine their intent. Return a JSON object with:
-- action: one of "info", "file", "search", "commits", "issues", "list", "team", "collaborators", "contributors", "linear_issues", "linear_create", "linear_update", "linear_assign", "linear_comment", "linear_teams", "linear_projects", "linear_search", "linear_state", "browse", "structure", "tree", "find_usage", "github_issue", or "general"
-- parameters: object with relevant fields (filePath, searchTerm, directoryPath, question, linearTitle, linearTeam, linearDescription, linearIssueId, linearState, linearAssignee, linearComment, linearSearchTerm, startLine, endLine, moduleName)
+- action: one of "info", "file", "search", "commits", "issues", "list", "team", "collaborators", "contributors", "linear_issues", "linear_create", "linear_update", "linear_assign", "linear_comment", "linear_teams", "linear_projects", "linear_search", "linear_state", "browse", "structure", "tree", "find_usage", "github_issue", "user_work", "work_conflict_check", or "general"
+- parameters: object with relevant fields (filePath, searchTerm, directoryPath, question, linearTitle, linearTeam, linearDescription, linearIssueId, linearState, linearAssignee, linearComment, linearSearchTerm, startLine, endLine, moduleName, username, proposedWork)
 - confidence: number 0-1
 
 GitHub Examples:
@@ -106,6 +108,13 @@ User Work Examples:
 - "What is john working on?" → {"action": "user_work", "parameters": {"username": "john"}, "confidence": 0.9}
 - "Show me what user123 is working on" → {"action": "user_work", "parameters": {"username": "user123"}, "confidence": 0.9}
 - "What are the current tasks for aryan0821?" → {"action": "user_work", "parameters": {"username": "aryan0821"}, "confidence": 0.9}
+
+Work Conflict Check Examples:
+- "Should I work on authentication?" → {"action": "work_conflict_check", "parameters": {"proposedWork": "authentication"}, "confidence": 0.9}
+- "Should I work on the login feature?" → {"action": "work_conflict_check", "parameters": {"proposedWork": "login feature"}, "confidence": 0.9}
+- "Is anyone working on webhooks?" → {"action": "work_conflict_check", "parameters": {"proposedWork": "webhooks"}, "confidence": 0.9}
+- "Should I start working on issue #4?" → {"action": "work_conflict_check", "parameters": {"proposedWork": "issue #4"}, "confidence": 0.9}
+- "Can I work on the sync feature?" → {"action": "work_conflict_check", "parameters": {"proposedWork": "sync feature"}, "confidence": 0.9}
 
 User Implementation Questions:
 - "How exactly is Beatriz implementing standup notes generation?" → {"action": "general", "parameters": {}, "confidence": 0.9}
@@ -183,6 +192,22 @@ Only return valid JSON, no other text.`;
       linearIssues?: any[];
     };
     userContext?: any;
+    workConflicts?: {
+      proposedWork: string;
+      conflicts: Array<{
+        user: string;
+        githubIssues?: any[];
+        linearIssues?: any[];
+        commits?: any[];
+        conflictReason: string;
+      }>;
+      allUsersWork?: Array<{
+        username: string;
+        githubIssues?: any[];
+        linearIssues?: any[];
+        commits?: any[];
+      }>;
+    };
   }): Promise<string> {
     if (!this.openai) {
       // Fallback to basic responses without LLM
@@ -441,6 +466,58 @@ Only return valid JSON, no other text.`;
         }
       }
 
+      // Work Conflict Check
+      if (context.workConflicts) {
+        const conflict = context.workConflicts;
+        contextText += `# Work Conflict Check: "${conflict.proposedWork}"\n\n`;
+        
+        if (conflict.conflicts && conflict.conflicts.length > 0) {
+          contextText += `## ⚠️ Potential Conflicts Found:\n\n`;
+          conflict.conflicts.forEach((conf: any, idx: number) => {
+            contextText += `### ${idx + 1}. ${conf.user} is working on related items:\n`;
+            contextText += `   Conflict Reason: ${conf.conflictReason}\n\n`;
+            
+            if (conf.githubIssues && conf.githubIssues.length > 0) {
+              contextText += `   GitHub Issues:\n`;
+              conf.githubIssues.forEach((issue: any) => {
+                contextText += `   - #${issue.number}: ${issue.title} (${issue.state})\n`;
+              });
+              contextText += `\n`;
+            }
+            
+            if (conf.linearIssues && conf.linearIssues.length > 0) {
+              contextText += `   Linear Issues:\n`;
+              conf.linearIssues.forEach((issue: any) => {
+                contextText += `   - ${issue.identifier}: ${issue.title} (${issue.state.name})\n`;
+              });
+              contextText += `\n`;
+            }
+            
+            if (conf.commits && conf.commits.length > 0) {
+              contextText += `   Recent Commits:\n`;
+              conf.commits.forEach((commit: any) => {
+                contextText += `   - ${commit.message} (${new Date(commit.date).toLocaleDateString()})\n`;
+              });
+              contextText += `\n`;
+            }
+          });
+        } else {
+          contextText += `## ✅ No Conflicts Found\n\n`;
+          contextText += `No one appears to be working on similar tasks. It's safe to proceed with "${conflict.proposedWork}".\n\n`;
+        }
+        
+        if (conflict.allUsersWork && conflict.allUsersWork.length > 0) {
+          contextText += `## Team Work Overview:\n\n`;
+          conflict.allUsersWork.forEach((userWork: any) => {
+            const issueCount = (userWork.githubIssues?.length || 0) + (userWork.linearIssues?.length || 0);
+            if (issueCount > 0) {
+              contextText += `- ${userWork.username}: ${issueCount} active issue(s)\n`;
+            }
+          });
+          contextText += `\n`;
+        }
+      }
+
       // GitHub Issue (specific issue)
       if (context.githubIssue) {
         contextText += `# GitHub Issue #${context.githubIssue.number}\n`;
@@ -658,6 +735,12 @@ Only return valid JSON, no other text.`;
         console.log('✅ Using fallback response for github_issue to ensure accurate data (prevents hallucination)');
         return this.generateFallbackResponse(intent, context);
       }
+      
+      // For work_conflict_check queries, ALWAYS use fallback response for formatted output
+      if (intent.action === 'work_conflict_check' && context.workConflicts) {
+        console.log('✅ Using fallback response for work_conflict_check to ensure formatted output');
+        return this.generateFallbackResponse(intent, context);
+      }
 
       const response = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -784,6 +867,75 @@ Only return valid JSON, no other text.`;
           }
         }
         return "❌ GitHub issue not found. Please check the issue number.";
+      case 'work_conflict_check':
+        if (context.workConflicts) {
+          const conflict = context.workConflicts;
+          let result = `🔍 *Work Conflict Check*\n`;
+          result += `*Proposed Work:* "${conflict.proposedWork}"\n\n`;
+          result += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+          
+          if (conflict.conflicts && conflict.conflicts.length > 0) {
+            result += `⚠️ *⚠️  POTENTIAL CONFLICTS FOUND ⚠️*\n\n`;
+            result += `Found ${conflict.conflicts.length} team member(s) working on related items:\n\n`;
+            
+            conflict.conflicts.forEach((conf: any, idx: number) => {
+              result += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+              result += `*${idx + 1}. ${conf.user}*\n`;
+              result += `_${conf.conflictReason}_\n\n`;
+              
+              if (conf.githubIssues && conf.githubIssues.length > 0) {
+                result += `📋 *GitHub Issues:*\n`;
+                conf.githubIssues.forEach((issue: any) => {
+                  result += `   • *#${issue.number}* - ${issue.title}\n`;
+                  result += `     Status: ${issue.state} | 🔗 <${issue.url}|View Issue>\n\n`;
+                });
+              }
+              
+              if (conf.linearIssues && conf.linearIssues.length > 0) {
+                result += `📋 *Linear Issues:*\n`;
+                conf.linearIssues.forEach((issue: any) => {
+                  result += `   • *${issue.identifier}* - ${issue.title}\n`;
+                  result += `     Status: ${issue.state.name} | 🔗 <${issue.url}|View Issue>\n\n`;
+                });
+              }
+              
+              if (conf.commits && conf.commits.length > 0) {
+                result += `💻 *Recent Commits:*\n`;
+                conf.commits.slice(0, 3).forEach((commit: any) => {
+                  result += `   • ${commit.message}\n`;
+                  result += `     📅 ${new Date(commit.date).toLocaleDateString()}\n\n`;
+                });
+              }
+            });
+            
+            result += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+            result += `💡 *Recommendation:*\n`;
+            result += `Consider coordinating with the team members above before starting work on "${conflict.proposedWork}". This will help avoid duplicate work and ensure better collaboration.`;
+          } else {
+            result += `✅ *✅  NO CONFLICTS FOUND ✅*\n\n`;
+            result += `Great news! No one appears to be working on similar tasks.\n`;
+            result += `It's *safe to proceed* with "${conflict.proposedWork}".\n\n`;
+            
+            if (conflict.allUsersWork && conflict.allUsersWork.length > 0) {
+              const activeUsers = conflict.allUsersWork.filter((userWork: any) => {
+                const issueCount = (userWork.githubIssues?.length || 0) + (userWork.linearIssues?.length || 0);
+                return issueCount > 0;
+              });
+              
+              if (activeUsers.length > 0) {
+                result += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                result += `📊 *Team Activity Overview:*\n`;
+                activeUsers.forEach((userWork: any) => {
+                  const issueCount = (userWork.githubIssues?.length || 0) + (userWork.linearIssues?.length || 0);
+                  result += `   • *${userWork.username}*: ${issueCount} active issue(s)\n`;
+                });
+              }
+            }
+          }
+          
+          return result;
+        }
+        return `❌ I couldn't check for work conflicts. Please try again.`;
       case 'user_work':
         if (context.userWork) {
           const work = context.userWork;

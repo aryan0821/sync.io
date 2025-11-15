@@ -49,6 +49,22 @@ const AgentStateAnnotation = Annotation.Root({
     linearSearchTerm?: string;
     linearState?: string;
     userContext?: any;
+    workConflicts?: {
+      proposedWork: string;
+      conflicts: Array<{
+        user: string;
+        githubIssues?: any[];
+        linearIssues?: any[];
+        commits?: any[];
+        conflictReason: string;
+      }>;
+      allUsersWork?: Array<{
+        username: string;
+        githubIssues?: any[];
+        linearIssues?: any[];
+        commits?: any[];
+      }>;
+    };
   }>({
     reducer: (x: any, y: any) => ({ ...x, ...y }),
     default: () => ({}),
@@ -231,8 +247,8 @@ export class LangGraphAgent {
       return 'generate';
     }
 
-    // GitHub issue and user work queries go to GitHub context
-    if (action === 'github_issue' || action === 'user_work') {
+    // GitHub issue, user work, and work conflict check queries go to GitHub context
+    if (action === 'github_issue' || action === 'user_work' || action === 'work_conflict_check') {
       return 'github_only';
     }
 
@@ -441,6 +457,158 @@ export class LangGraphAgent {
               githubCommits,
               linearIssues,
             };
+          }
+          break;
+
+        case 'work_conflict_check':
+          if (intent.parameters.proposedWork) {
+            const proposedWork = intent.parameters.proposedWork.toLowerCase();
+            console.log(`🔍 [LangGraph] Checking work conflicts for: "${proposedWork}"`);
+            
+            // Get all collaborators/contributors
+            let allUsers: string[] = [];
+            try {
+              const collaborators = await this.githubService.getCollaborators();
+              allUsers = collaborators.map((c: any) => c.username).filter(Boolean);
+              console.log(`👥 Found ${allUsers.length} collaborators`);
+            } catch (error) {
+              console.warn('⚠️  Could not get collaborators, trying contributors');
+              try {
+                const contributors = await this.githubService.getContributors(20);
+                allUsers = contributors.map((c: any) => c.username).filter(Boolean);
+                console.log(`👥 Found ${allUsers.length} contributors`);
+              } catch (err) {
+                console.error('Error getting users:', err);
+              }
+            }
+            
+            // Get work for all users
+            const allUsersWork: Array<{
+              username: string;
+              githubIssues?: any[];
+              linearIssues?: any[];
+              commits?: any[];
+            }> = [];
+            
+            const conflicts: Array<{
+              user: string;
+              githubIssues?: any[];
+              linearIssues?: any[];
+              commits?: any[];
+              conflictReason: string;
+            }> = [];
+            
+            // Keywords to match for conflicts
+            const proposedKeywords = proposedWork
+              .split(/\s+/)
+              .filter((word: string) => word.length > 3)
+              .map((word: string) => word.toLowerCase());
+            
+            for (const username of allUsers) {
+              try {
+                // Get GitHub issues
+                const githubIssues = await this.githubService.getIssuesByAssignee(username, 10);
+                
+                // Get recent commits
+                const githubCommits = await this.githubService.getCommitsByAuthor(username, 10);
+                
+                // Get Linear issues
+                let linearIssues: any[] = [];
+                if (this.linearService) {
+                  try {
+                    const allIssues = await this.linearService.getIssues(undefined, 50);
+                    linearIssues = allIssues.filter((issue: any) => {
+                      if (!issue.assignee) return false;
+                      const assigneeName = issue.assignee.name?.toLowerCase() || '';
+                      const assigneeEmail = issue.assignee.email?.toLowerCase() || '';
+                      const searchName = username.toLowerCase();
+                      return assigneeName.includes(searchName) || 
+                             assigneeEmail.includes(searchName) ||
+                             assigneeEmail === `${username}@`.toLowerCase();
+                    });
+                  } catch (error) {
+                    // Ignore Linear errors
+                  }
+                }
+                
+                allUsersWork.push({
+                  username,
+                  githubIssues,
+                  linearIssues,
+                  commits: githubCommits,
+                });
+                
+                // Check for conflicts
+                const userConflicts: {
+                  githubIssues?: any[];
+                  linearIssues?: any[];
+                  commits?: any[];
+                } = {};
+                
+                // Check GitHub issues for conflicts
+                const conflictingIssues = githubIssues.filter((issue: any) => {
+                  const issueText = `${issue.title} ${issue.body || ''}`.toLowerCase();
+                  return proposedKeywords.some((keyword: string) => issueText.includes(keyword)) ||
+                         issueText.includes(proposedWork);
+                });
+                
+                if (conflictingIssues.length > 0) {
+                  userConflicts.githubIssues = conflictingIssues;
+                }
+                
+                // Check Linear issues for conflicts
+                const conflictingLinearIssues = linearIssues.filter((issue: any) => {
+                  const issueText = `${issue.title} ${issue.description || ''}`.toLowerCase();
+                  return proposedKeywords.some((keyword: string) => issueText.includes(keyword)) ||
+                         issueText.includes(proposedWork);
+                });
+                
+                if (conflictingLinearIssues.length > 0) {
+                  userConflicts.linearIssues = conflictingLinearIssues;
+                }
+                
+                // Check commits for conflicts
+                const conflictingCommits = githubCommits.filter((commit: any) => {
+                  const commitText = commit.message.toLowerCase();
+                  return proposedKeywords.some((keyword: string) => commitText.includes(keyword)) ||
+                         commitText.includes(proposedWork);
+                });
+                
+                if (conflictingCommits.length > 0) {
+                  userConflicts.commits = conflictingCommits.slice(0, 3); // Limit to 3 most recent
+                }
+                
+                // If any conflicts found, add to conflicts array
+                if (userConflicts.githubIssues || userConflicts.linearIssues || userConflicts.commits) {
+                  let conflictReason = '';
+                  if (userConflicts.githubIssues) {
+                    conflictReason += `${userConflicts.githubIssues.length} similar GitHub issue(s). `;
+                  }
+                  if (userConflicts.linearIssues) {
+                    conflictReason += `${userConflicts.linearIssues.length} similar Linear issue(s). `;
+                  }
+                  if (userConflicts.commits) {
+                    conflictReason += `Recent commits on related work.`;
+                  }
+                  
+                  conflicts.push({
+                    user: username,
+                    ...userConflicts,
+                    conflictReason: conflictReason.trim() || 'Related work found',
+                  });
+                }
+              } catch (error) {
+                console.warn(`⚠️  Error getting work for ${username}:`, error);
+              }
+            }
+            
+            context.workConflicts = {
+              proposedWork: intent.parameters.proposedWork,
+              conflicts,
+              allUsersWork,
+            };
+            
+            console.log(`✅ Found ${conflicts.length} potential conflict(s) for "${proposedWork}"`);
           }
           break;
 

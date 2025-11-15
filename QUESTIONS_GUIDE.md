@@ -86,6 +86,19 @@ This shows:
 - Recent commits by the user
 - Linear issues assigned to the user (if Linear is configured)
 
+### Work Conflict Check
+- "Should I work on authentication?"
+- "Should I work on the login feature?"
+- "Is anyone working on webhooks?"
+- "Should I start working on issue #4?"
+- "Can I work on the sync feature?"
+
+This checks:
+- All team members' GitHub issues for overlaps
+- All team members' Linear issues for overlaps
+- Recent commits for related work
+- Provides recommendations on whether to proceed or coordinate first
+
 ---
 
 ## 📋 Linear Questions
