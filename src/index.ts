@@ -4,6 +4,9 @@ import { GitHubService } from './services/github';
 import { LinearService } from './services/linear';
 import { LLMService } from './services/llm';
 import { QuestionHandler } from './handlers/questionHandler';
+import { SyncService } from './services/syncService';
+import { MemoryService } from './services/memoryService';
+import { UserContextService } from './services/userContextService';
 import { setupWebhookServer } from './webhook';
 
 // Load environment variables
@@ -56,7 +59,20 @@ if (process.env.LINEAR_API_TOKEN) {
 }
 
 const llmService = new LLMService(process.env.OPENAI_API_KEY);
-const questionHandler = new QuestionHandler(githubService, llmService, linearService);
+const memoryService = new MemoryService(20, 24 * 60 * 60 * 1000); // 20 messages, 24 hours
+const userContextService = new UserContextService();
+const questionHandler = new QuestionHandler(githubService, llmService, linearService, memoryService, userContextService);
+
+// Initialize sync service if both GitHub and Linear are configured
+let syncService: SyncService | undefined;
+if (linearService) {
+  try {
+    syncService = new SyncService(githubService, linearService);
+    console.log('✅ Sync service initialized (GitHub ↔ Linear)');
+  } catch (error) {
+    console.error('⚠️  Failed to initialize sync service:', error);
+  }
+}
 
 // Listen for ALL messages (more permissive)
 app.message(async ({ message, say }: any) => {
@@ -106,16 +122,40 @@ app.message(async ({ message, say }: any) => {
   console.log('✅ Processing message...');
 
   try {
-    // Process the question
-    console.log('🤔 Processing question:', text);
-    const response = await questionHandler.handleQuestion(text);
-    console.log('✅ Generated response:', response.substring(0, 100) + '...');
+    // Clean the text - remove bot mentions and extra whitespace
+    let cleanText = text.trim();
+    if (botUserId) {
+      cleanText = cleanText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
+    }
+    // Remove common prefixes
+    cleanText = cleanText.replace(/^(github|linear|repo)\s+/i, '').trim();
     
-    // Send response (don't thread it, send as regular message)
-    await say(response);
+    // Get thread ID for conversation memory (use thread_ts if in a thread, otherwise use channel+user)
+    const threadId = message.thread_ts || `${message.channel}_${message.user}`;
+    
+    // Process the question with memory
+    console.log('🤔 Processing question:', cleanText);
+    console.log('📝 Original text:', text);
+    console.log('💾 Thread ID for memory:', threadId);
+    const response = await questionHandler.handleQuestion(cleanText, threadId, {
+      channel: message.channel,
+      user: message.user,
+    });
+    console.log('✅ Generated response length:', response.length);
+    console.log('✅ Generated response preview:', response.substring(0, 200) + '...');
+    
+    // Send response (thread it if it's a reply, otherwise send as regular message)
+    if (message.thread_ts) {
+      // Reply in thread
+      await say({ text: response, thread_ts: message.thread_ts });
+    } else {
+      // Send as regular message
+      await say(response);
+    }
     console.log('📤 Response sent successfully');
   } catch (error) {
     console.error('❌ Error processing message:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     try {
       await say('Sorry, I encountered an error processing your request. Please try again.');
     } catch (sendError) {
@@ -128,11 +168,34 @@ app.message(async ({ message, say }: any) => {
 app.event('app_mention', async ({ event, say }: any) => {
   console.log('📢 App mention received:', event.text);
   try {
-    const response = await questionHandler.handleQuestion(event.text);
-    await say(response);
+    // Clean the text - remove bot mentions
+    let cleanText = event.text.trim();
+    const botUserId = process.env.SLACK_BOT_USER_ID;
+    if (botUserId) {
+      cleanText = cleanText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
+    }
+    
+    // Get thread ID for conversation memory
+    const threadId = event.thread_ts || `${event.channel}_${event.user}`;
+    
+    console.log('🤔 Processing mention question:', cleanText);
+    console.log('💾 Thread ID for memory:', threadId);
+    const response = await questionHandler.handleQuestion(cleanText, threadId, {
+      channel: event.channel,
+      user: event.user,
+    });
+    console.log('✅ Generated response length:', response.length);
+    
+    // Reply in thread if it's a thread, otherwise send as regular message
+    if (event.thread_ts) {
+      await say({ text: response, thread_ts: event.thread_ts });
+    } else {
+      await say(response);
+    }
     console.log('📤 Mention response sent');
   } catch (error) {
     console.error('❌ Error processing mention:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     await say('Sorry, I encountered an error processing your request. Please try again.');
   }
 });
@@ -163,7 +226,14 @@ app.command('/github', async ({ command, ack, respond, client }: any) => {
 
     // Process the question with GitHub-only mode
     const question = `/github ${command.text}`;
-    const response = await questionHandler.handleQuestion(question);
+    const threadId = `${command.channel_id}_${command.user_id}`;
+    console.log('🤔 Processing /github question:', question);
+    console.log('💾 Thread ID for memory:', threadId);
+    const response = await questionHandler.handleQuestion(question, threadId, {
+      channel: command.channel_id,
+      user: command.user_id,
+    });
+    console.log('✅ Generated response length:', response.length);
     await respond(response);
     console.log('✅ /github command processed');
   } catch (error: any) {
@@ -203,7 +273,14 @@ app.command('/linear', async ({ command, ack, respond, client }: any) => {
 
     // Process the question with Linear-only mode
     const question = `/linear ${command.text}`;
-    const response = await questionHandler.handleQuestion(question);
+    const threadId = `${command.channel_id}_${command.user_id}`;
+    console.log('🤔 Processing /linear question:', question);
+    console.log('💾 Thread ID for memory:', threadId);
+    const response = await questionHandler.handleQuestion(question, threadId, {
+      channel: command.channel_id,
+      user: command.user_id,
+    });
+    console.log('✅ Generated response length:', response.length);
     await respond(response);
     console.log('✅ /linear command processed');
   } catch (error: any) {
@@ -228,12 +305,18 @@ app.event('message', async ({ event, say }: any) => {
   });
 });
 
+// Clean up old conversations periodically (every hour)
+setInterval(() => {
+  memoryService.cleanup();
+}, 60 * 60 * 1000); // 1 hour
+
 // Start the app
 (async () => {
   try {
     await app.start();
     console.log('⚡️ Slack bot is running!');
     console.log('🔌 Waiting for messages...\n');
+    console.log('💾 Memory enabled: Bot remembers conversation context in threads');
     
     // Get and display bot user ID
     try {
@@ -254,20 +337,39 @@ app.event('message', async ({ event, say }: any) => {
       console.log('   - Use /github search for bug');
       console.log('   - Use /linear show my issues\n');
 
-      // Setup GitHub webhook server if configured
+      // Setup webhook server if configured
       const slackUserId = process.env.SLACK_USER_ID;
       const githubUsername = process.env.GITHUB_USERNAME;
+      const linearUserEmail = process.env.LINEAR_USER_EMAIL;
       const webhookPort = process.env.WEBHOOK_PORT || '3000';
+      const notifyOnAllGitHubEvents = process.env.GITHUB_NOTIFY_ALL_EVENTS === 'true';
 
       if (slackUserId && githubUsername) {
-        const webhookApp = setupWebhookServer(app, githubService, slackUserId, githubUsername);
+        const webhookApp = setupWebhookServer({
+          slackApp: app,
+          githubService,
+          linearService,
+          syncService,
+          slackUserId,
+          githubUsername,
+          linearUserEmail,
+          notifyOnAllGitHubEvents,
+        });
+
         webhookApp.listen(webhookPort, () => {
-          console.log(`🔔 GitHub webhook server running on port ${webhookPort}`);
-          console.log(`📡 Webhook URL: http://localhost:${webhookPort}/webhook/github`);
-          console.log(`💡 Configure this URL in your GitHub repository webhook settings\n`);
+          console.log(`🔔 Webhook server running on port ${webhookPort}`);
+          console.log(`📡 GitHub webhook URL: http://localhost:${webhookPort}/webhook/github`);
+          if (linearService && linearUserEmail) {
+            console.log(`📡 Linear webhook URL: http://localhost:${webhookPort}/webhook/linear`);
+          }
+          console.log(`💡 Configure these URLs in your GitHub/Linear webhook settings`);
+          if (syncService) {
+            console.log(`🔄 Bidirectional sync enabled (GitHub ↔ Linear)`);
+          }
+          console.log('');
         });
       } else {
-        console.log('⚠️  GitHub webhooks not configured. Set SLACK_USER_ID and GITHUB_USERNAME in .env to enable.\n');
+        console.log('⚠️  Webhooks not configured. Set SLACK_USER_ID and GITHUB_USERNAME in .env to enable.\n');
       }
     } catch (authError) {
       console.log('⚠️  Could not fetch bot user ID. Bot will still work without it.');

@@ -578,6 +578,75 @@ export class LinearService {
   }
 
   /**
+   * Get issues assigned to a specific user
+   */
+  async getIssuesByAssignee(userEmail: string, limit: number = 10): Promise<LinearIssue[]> {
+    const query = `
+      query GetIssuesByAssignee($first: Int!, $userEmail: String!) {
+        issues(
+          filter: {
+            assignee: { email: { eq: $userEmail } }
+            state: { type: { neq: completed } }
+          }
+          first: $first
+        ) {
+          nodes {
+            id
+            identifier
+            title
+            description
+            state {
+              name
+              type
+            }
+            assignee {
+              name
+              email
+            }
+            team {
+              name
+              key
+            }
+            priority
+            createdAt
+            updatedAt
+            url
+          }
+        }
+      }
+    `;
+
+    try {
+      const data = await this.query<any>(query, { first: limit, userEmail });
+      return data.issues.nodes.map((node: any) => ({
+        id: node.id,
+        identifier: node.identifier,
+        title: node.title,
+        description: node.description,
+        state: {
+          name: node.state.name,
+          type: node.state.type,
+        },
+        assignee: node.assignee ? {
+          name: node.assignee.name,
+          email: node.assignee.email,
+        } : null,
+        team: {
+          name: node.team.name,
+          key: node.team.key,
+        },
+        priority: node.priority,
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+        url: node.url,
+      }));
+    } catch (error) {
+      console.error('Error getting issues by assignee:', error);
+      return [];
+    }
+  }
+
+  /**
    * Search for users by name or email
    */
   async searchUsers(searchTerm: string): Promise<LinearUser[]> {

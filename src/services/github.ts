@@ -525,10 +525,100 @@ export class GitHubService {
         author: issue.user?.login || 'Unknown',
         createdAt: issue.created_at,
         url: issue.html_url,
+        assignees: issue.assignees?.map((a: any) => a.login) || [],
       }));
     } catch (error) {
       console.error('Error getting issues:', error);
       return [];
+    }
+  }
+
+  /**
+   * Get issues assigned to a specific user
+   */
+  async getIssuesByAssignee(username: string, limit: number = 10): Promise<any[]> {
+    try {
+      const { data } = await this.octokit.issues.listForRepo({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'open',
+        assignee: username,
+        per_page: limit,
+      });
+
+      return data.map((issue: any) => ({
+        number: issue.number,
+        title: issue.title,
+        state: issue.state,
+        author: issue.user?.login || 'Unknown',
+        createdAt: issue.created_at,
+        url: issue.html_url,
+        assignees: issue.assignees?.map((a: any) => a.login) || [],
+      }));
+    } catch (error) {
+      console.error('Error getting issues by assignee:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get commits by a specific user
+   */
+  async getCommitsByAuthor(username: string, limit: number = 10): Promise<any[]> {
+    try {
+      const { data } = await this.octokit.repos.listCommits({
+        owner: this.owner,
+        repo: this.repo,
+        author: username,
+        per_page: limit,
+      });
+
+      return data.map((commit: any) => ({
+        sha: commit.sha.substring(0, 7),
+        message: commit.commit.message.split('\n')[0],
+        author: commit.commit.author?.name || commit.author?.login || 'Unknown',
+        date: commit.commit.author?.date || commit.commit.committer?.date,
+        url: commit.html_url,
+      }));
+    } catch (error) {
+      console.error('Error getting commits by author:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get a specific issue by number
+   */
+  async getIssueByNumber(issueNumber: number): Promise<any | null> {
+    try {
+      const { data } = await this.octokit.issues.get({
+        owner: this.owner,
+        repo: this.repo,
+        issue_number: issueNumber,
+      });
+
+      return {
+        number: data.number,
+        title: data.title,
+        body: data.body,
+        state: data.state,
+        author: data.user?.login || 'Unknown',
+        assignees: data.assignees?.map((a: any) => ({
+          login: a.login,
+          name: a.name || a.login,
+          avatar_url: a.avatar_url,
+        })) || [],
+        labels: data.labels?.map((l: any) => l.name) || [],
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+        url: data.html_url,
+      };
+    } catch (error: any) {
+      if (error?.status === 404) {
+        return null;
+      }
+      console.error(`Error getting issue #${issueNumber}:`, error);
+      return null;
     }
   }
 

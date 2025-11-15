@@ -2,23 +2,39 @@ import { GitHubService } from '../services/github';
 import { LinearService } from '../services/linear';
 import { LLMService, LLMIntent } from '../services/llm';
 import { LangGraphAgent } from '../agents/langgraph-agent';
+import { MemoryService } from '../services/memoryService';
+import { UserContextService } from '../services/userContextService';
 
 export class QuestionHandler {
   private githubService: GitHubService;
   private linearService: LinearService | null;
   private llmService: LLMService;
   private agent: LangGraphAgent;
+  private memoryService: MemoryService;
+  private userContextService: UserContextService;
 
-  constructor(githubService: GitHubService, llmService: LLMService, linearService?: LinearService) {
+  constructor(
+    githubService: GitHubService,
+    llmService: LLMService,
+    linearService?: LinearService,
+    memoryService?: MemoryService,
+    userContextService?: UserContextService
+  ) {
     this.githubService = githubService;
     this.llmService = llmService;
     this.linearService = linearService || null;
+    this.memoryService = memoryService || new MemoryService();
+    this.userContextService = userContextService || new UserContextService();
     
     // Initialize LangGraph agent
-    this.agent = new LangGraphAgent(githubService, linearService || null, llmService);
+    this.agent = new LangGraphAgent(githubService, linearService || null, llmService, this.memoryService, this.userContextService);
   }
 
-  async handleQuestion(question: string): Promise<string> {
+  async handleQuestion(
+    question: string,
+    threadId?: string,
+    metadata?: { channel?: string; user?: string }
+  ): Promise<string> {
     let lowerQuestion = question.toLowerCase().trim();
     
     // Handle simple greetings with help
@@ -26,9 +42,24 @@ export class QuestionHandler {
       return this.getHelpMessage();
     }
 
+    // Get conversation history if threadId is provided
+    let conversationHistory: any[] = [];
+    if (threadId) {
+      conversationHistory = this.memoryService.getConversationHistory(threadId, 10);
+      console.log(`💾 [Memory] Retrieved ${conversationHistory.length} previous messages from conversation ${threadId}`);
+    }
+
     // Use LangGraph agent for intelligent processing
     console.log('🤖 [LangGraph] Starting agentic workflow...');
-    return await this.agent.run(question);
+    const response = await this.agent.run(question, conversationHistory);
+    
+    // Store conversation in memory
+    if (threadId) {
+      this.memoryService.addMessage(threadId, 'user', question, metadata);
+      this.memoryService.addMessage(threadId, 'assistant', response, metadata);
+    }
+    
+    return response;
   }
 
   /**

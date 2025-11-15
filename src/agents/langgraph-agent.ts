@@ -7,6 +7,8 @@ import { StateGraph, Annotation } from '@langchain/langgraph';
 import { GitHubService } from '../services/github';
 import { LinearService } from '../services/linear';
 import { LLMService, LLMIntent } from '../services/llm';
+import { MemoryService, ConversationMessage } from '../services/memoryService';
+import { UserContextService } from '../services/userContextService';
 
 /**
  * Agent State Schema using LangGraph Annotation
@@ -46,6 +48,7 @@ const AgentStateAnnotation = Annotation.Root({
     linearProjects?: any[];
     linearSearchTerm?: string;
     linearState?: string;
+    userContext?: any;
   }>({
     reducer: (x: any, y: any) => ({ ...x, ...y }),
     default: () => ({}),
@@ -75,15 +78,21 @@ export class LangGraphAgent {
   private githubService: GitHubService;
   private linearService: LinearService | null;
   private llmService: LLMService;
+  private memoryService: MemoryService;
+  private userContextService: UserContextService;
 
   constructor(
     githubService: GitHubService,
     linearService: LinearService | null,
-    llmService: LLMService
+    llmService: LLMService,
+    memoryService?: MemoryService,
+    userContextService?: UserContextService
   ) {
     this.githubService = githubService;
     this.linearService = linearService;
     this.llmService = llmService;
+    this.memoryService = memoryService || new MemoryService();
+    this.userContextService = userContextService || new UserContextService();
     this.graph = this.buildGraph();
   }
 
@@ -146,6 +155,7 @@ export class LangGraphAgent {
     let searchMode: 'both' | 'linear' | 'github' = 'both';
     let cleanQuestion = state.question;
 
+    // Check for explicit prefixes first
     if (lowerQuestion.startsWith('/linear ')) {
       searchMode = 'linear';
       cleanQuestion = state.question.substring(8).trim();
@@ -158,6 +168,10 @@ export class LangGraphAgent {
     } else if (lowerQuestion === '/github') {
       searchMode = 'github';
       cleanQuestion = '';
+    } else if (lowerQuestion.includes('linear')) {
+      // If "linear" is mentioned anywhere in the question, prioritize Linear
+      searchMode = 'linear';
+      console.log('🔍 Detected "linear" keyword, setting searchMode to linear');
     }
 
     return {
@@ -196,14 +210,68 @@ export class LangGraphAgent {
   private shouldGatherContext(state: AgentState): string {
     const action = state.intent?.action || 'general';
     const searchMode = state.searchMode;
+    const question = state.question.toLowerCase();
+
+    // Beatriz questions should skip GitHub context and go directly to response generation
+    // This ensures we use the JSON file context instead of GitHub repo info
+    const beatrizPatterns = [
+      'beatriz',
+      'how is beatriz solving',
+      'how is beatriz solving her task',
+      'beatriz solving',
+      'beatriz task',
+      'beatriz implementation',
+      'beatriz approach'
+    ];
+    
+    const isBeatrizQuestion = beatrizPatterns.some(pattern => question.includes(pattern));
+    if (isBeatrizQuestion) {
+      console.log('🎯 [LangGraph] Beatriz question detected - skipping GitHub context, using JSON file');
+      // Load Beatriz context immediately and go to response generation
+      return 'generate';
+    }
+
+    // GitHub issue and user work queries go to GitHub context
+    if (action === 'github_issue' || action === 'user_work') {
+      return 'github_only';
+    }
+
+    // If "linear" is in the question, prioritize Linear
+    if (question.includes('linear') && searchMode !== 'github') {
+      // For team-related queries with "linear", use linear_teams
+      if ((action === 'team' || action === 'collaborators') && this.linearService) {
+        return 'linear_only';
+      }
+      // For other Linear actions
+      const linearOnlyActions = ['linear_issues', 'linear_teams', 'linear_projects', 'linear_search', 'linear_state'];
+      if (linearOnlyActions.includes(action)) {
+        return 'linear_only';
+      }
+      // If searchMode is linear, always use linear_only
+      if (searchMode === 'linear') {
+        return 'linear_only';
+      }
+    }
 
     // Linear mutations
     if (['linear_create', 'linear_update', 'linear_assign', 'linear_comment'].includes(action)) {
       return 'linear_mutation';
     }
 
-    // If no intent or general, go straight to generation
-    if (!state.intent || action === 'general') {
+    // Linear-only actions should skip GitHub context
+    const linearOnlyActions = ['linear_issues', 'linear_teams', 'linear_projects', 'linear_search', 'linear_state'];
+    if (linearOnlyActions.includes(action)) {
+      return 'linear_only';
+    }
+
+    // If action is "general" or "search" but question mentions "linear", force Linear
+    if ((action === 'general' || action === 'search') && question.includes('linear')) {
+      console.log('🔄 Overriding general/search action to Linear because "linear" is mentioned');
+      return 'linear_only';
+    }
+
+    // If no intent or general, go straight to generation (but not if Linear is mentioned)
+    if (!state.intent || (action === 'general' && !question.includes('linear'))) {
       return 'generate';
     }
 
@@ -225,14 +293,63 @@ export class LangGraphAgent {
     const context: any = { ...state.context };
     const intent = state.intent!;
     const action = intent.action;
+    const question = state.question.toLowerCase();
+
+    // Check if question is about Beatriz specifically (hardcoded)
+    const questionLower = state.question.toLowerCase();
+    const beatrizPatterns = [
+      'beatriz',
+      'how is beatriz solving',
+      'how is beatriz solving her task',
+      'beatriz solving',
+      'beatriz task',
+      'beatriz implementation',
+      'beatriz approach'
+    ];
+    
+    const isBeatrizQuestion = beatrizPatterns.some(pattern => questionLower.includes(pattern));
+    
+    if (isBeatrizQuestion) {
+      const beatrizContext = this.userContextService.getUserContext('beatriz');
+      if (beatrizContext) {
+        console.log(`📋 [LangGraph] Found user context for: Beatriz (in gatherGitHubContext)`);
+        context.userContext = beatrizContext;
+      }
+    } else {
+      // Check if question is about a specific user's implementation/work
+      // Look for patterns like "how is [name] implementing", "how is [name] solving", etc.
+      const userImplementationPattern = /(?:how|what).*(?:is|are|does|did).*(\w+).*(?:implementing|solving|working|doing|building|creating|developing|approach)/i;
+      const userMatch = state.question.match(userImplementationPattern);
+      
+      if (userMatch && userMatch[1]) {
+        const userName = userMatch[1];
+        const userContext = this.userContextService.getUserContext(userName);
+        if (userContext) {
+          console.log(`📋 [LangGraph] Found user context for: ${userName}`);
+          context.userContext = userContext;
+        }
+      }
+    }
+
+    // Skip GitHub context for Linear-only actions
+    const linearOnlyActions = ['linear_issues', 'linear_teams', 'linear_projects', 'linear_search', 'linear_state'];
+    if (linearOnlyActions.includes(action)) {
+      console.log('⏭️  Skipping GitHub context for Linear-only action');
+      return {
+        context,
+        step: 'github_context_skipped',
+        toolsUsed: ['gatherGitHubContext'],
+      };
+    }
 
     try {
-      // Always get repo info
+      // Always get repo info (but don't fail if it errors)
       if (!context.repoInfo) {
         try {
           context.repoInfo = await this.githubService.getRepoInfo();
         } catch (error) {
-          console.warn('⚠️  Could not get repo info');
+          console.warn('⚠️  Could not get repo info (non-fatal)');
+          // Don't throw - continue with other context gathering
         }
       }
 
@@ -260,6 +377,59 @@ export class LangGraphAgent {
 
         case 'issues':
           context.issues = await this.githubService.getOpenIssues(10);
+          break;
+
+        case 'github_issue':
+          if (intent.parameters.githubIssueNumber) {
+            const issue = await this.githubService.getIssueByNumber(intent.parameters.githubIssueNumber);
+            if (issue) {
+              context.githubIssue = issue;
+            }
+          }
+          break;
+
+        case 'user_work':
+          if (intent.parameters.username) {
+            const username = intent.parameters.username;
+            console.log(`👤 [LangGraph] Gathering work for user: ${username}`);
+            
+            // Get GitHub issues assigned to user
+            const githubIssues = await this.githubService.getIssuesByAssignee(username, 10);
+            console.log(`📋 Found ${githubIssues.length} GitHub issues for ${username}`);
+            
+            // Get recent commits by user
+            const githubCommits = await this.githubService.getCommitsByAuthor(username, 10);
+            console.log(`💻 Found ${githubCommits.length} recent commits by ${username}`);
+            
+            // Get Linear issues assigned to user (if Linear is available)
+            let linearIssues: any[] = [];
+            if (this.linearService) {
+              try {
+                // Get all issues and filter by assignee name/email
+                const allIssues = await this.linearService.getIssues(undefined, 50);
+                linearIssues = allIssues.filter((issue: any) => {
+                  if (!issue.assignee) return false;
+                  // Match by name (case-insensitive partial match) or email
+                  const assigneeName = issue.assignee.name?.toLowerCase() || '';
+                  const assigneeEmail = issue.assignee.email?.toLowerCase() || '';
+                  const searchName = username.toLowerCase();
+                  return assigneeName.includes(searchName) || 
+                         assigneeEmail.includes(searchName) ||
+                         assigneeEmail === `${username}@`.toLowerCase();
+                });
+                console.log(`📋 Found ${linearIssues.length} Linear issues for ${username}`);
+              } catch (error) {
+                console.error('Error getting Linear issues for user:', error);
+              }
+            }
+            
+            context.userWork = {
+              username,
+              githubIssues,
+              githubCommits,
+              linearIssues,
+            };
+          }
           break;
 
         case 'list':
@@ -325,6 +495,16 @@ export class LangGraphAgent {
       };
     } catch (error: any) {
       console.error('❌ Error gathering GitHub context:', error);
+      // Don't propagate GitHub errors for Linear-only queries
+      const question = state.question.toLowerCase();
+      if (question.includes('linear') || state.searchMode === 'linear') {
+        console.log('⚠️  GitHub error occurred but skipping for Linear query');
+        return {
+          context: state.context, // Keep existing context (Linear data)
+          step: 'github_context_skipped',
+          toolsUsed: ['gatherGitHubContext'],
+        };
+      }
       return {
         error: error.message,
         step: 'error',
@@ -349,11 +529,27 @@ export class LangGraphAgent {
     const context: any = { ...state.context };
     const intent = state.intent!;
     const action = intent.action;
+    const question = state.question.toLowerCase();
 
     try {
+      // Handle team-related queries - if "linear" is mentioned or action is team/collaborators with linear searchMode
+      if ((action === 'team' || action === 'collaborators') && (question.includes('linear') || state.searchMode === 'linear')) {
+        context.linearTeams = await this.linearService.getTeams();
+        console.log('✅ Retrieved Linear teams for team query');
+      }
+      
       switch (action) {
         case 'linear_issues':
-          context.linearIssues = await this.linearService.getMyIssues(10);
+          // Check if user wants "my issues" vs "all issues" or "existing issues"
+          const questionLower = state.question.toLowerCase();
+          if (questionLower.includes('my') || questionLower.includes('assigned to me')) {
+            // User specifically asked for their issues
+            context.linearIssues = await this.linearService.getMyIssues(10);
+          } else {
+            // User asked for "existing issues" or "all issues" - get all issues
+            context.linearIssues = await this.linearService.getIssues(undefined, 50);
+            console.log(`✅ Retrieved ${context.linearIssues?.length || 0} Linear issues (all issues)`);
+          }
           break;
 
         case 'linear_teams':
@@ -388,13 +584,32 @@ export class LangGraphAgent {
 
         case 'search':
         case 'general':
-          // For general searches, also search Linear
-          if (state.question) {
-            const allIssues = await this.linearService.getIssues(undefined, 50);
-            context.linearIssues = allIssues.filter(issue =>
-              issue.title.toLowerCase().includes(state.question.toLowerCase()) ||
-              (issue.description && issue.description.toLowerCase().includes(state.question.toLowerCase()))
-            );
+          // For general searches with "linear" keyword, get Linear projects/teams/issues
+          const lowerQuestion = state.question.toLowerCase();
+          if (lowerQuestion.includes('linear')) {
+            if (lowerQuestion.includes('project')) {
+              context.linearProjects = await this.linearService.getProjects();
+              console.log('✅ Retrieved Linear projects for general query with "linear" keyword');
+            } else if (lowerQuestion.includes('team') || lowerQuestion.includes('teammate')) {
+              context.linearTeams = await this.linearService.getTeams();
+              console.log('✅ Retrieved Linear teams for general query with "linear" keyword');
+            } else if (lowerQuestion.includes('issue')) {
+              context.linearIssues = await this.linearService.getMyIssues(10);
+              console.log('✅ Retrieved Linear issues for general query with "linear" keyword');
+            } else {
+              // Default: get projects if "linear" is mentioned
+              context.linearProjects = await this.linearService.getProjects();
+              console.log('✅ Retrieved Linear projects for general query with "linear" keyword');
+            }
+          } else {
+            // For non-Linear general searches, search Linear issues
+            if (state.question) {
+              const allIssues = await this.linearService.getIssues(undefined, 50);
+              context.linearIssues = allIssues.filter(issue =>
+                issue.title.toLowerCase().includes(state.question.toLowerCase()) ||
+                (issue.description && issue.description.toLowerCase().includes(state.question.toLowerCase()))
+              );
+            }
           }
           break;
 
@@ -423,6 +638,13 @@ export class LangGraphAgent {
    * Handle Linear mutations
    */
   private async handleLinearMutation(state: AgentState): Promise<Partial<AgentState>> {
+    // Skip if this is a GitHub issue query
+    if (state.intent?.action === 'github_issue') {
+      return {
+        step: 'linear_mutation_skipped',
+        toolsUsed: ['handleLinearMutation'],
+      };
+    }
     console.log('✏️  [LangGraph] Handling Linear mutation...');
     
     if (!this.linearService) {
@@ -478,17 +700,29 @@ export class LangGraphAgent {
           const issueId = intent.parameters.linearIssueId;
           const stateName = intent.parameters.linearState;
 
-          if (!issueId) {
-            response = '❌ Please provide an issue identifier.';
+          // If no issue ID provided, try to extract from question
+          let extractedIssueId = issueId;
+          if (!extractedIssueId) {
+            // Try to extract issue identifier from question (e.g., SYN-2, FE-123)
+            const issueIdMatch = state.question.match(/\b([A-Z]+-\d+)\b/i);
+            if (issueIdMatch) {
+              extractedIssueId = issueIdMatch[1].toUpperCase();
+              console.log(`📌 Extracted issue ID from question: ${extractedIssueId}`);
+            }
+          }
+
+          if (!extractedIssueId) {
+            response = '❌ Please provide an issue identifier (e.g., SYN-2, FE-123).';
             break;
           }
 
-          const issue = await this.linearService.getIssueByIdentifier(issueId);
+          const issue = await this.linearService.getIssueByIdentifier(extractedIssueId);
           if (!issue) {
-            response = `❌ Issue ${issueId} not found.`;
+            response = `❌ Issue ${extractedIssueId} not found.`;
             break;
           }
 
+          // If state name is provided, update the issue status
           if (stateName) {
             const team = await this.linearService.findTeamByNameOrKey(issue.team.key);
             if (team) {
@@ -496,10 +730,52 @@ export class LangGraphAgent {
               if (stateId) {
                 const success = await this.linearService.updateIssueStatus(issue.id, stateId);
                 if (success) {
-                  response = `✅ Updated issue ${issueId} status to "${stateName}"\n${issue.url}`;
+                  response = `✅ Updated issue ${extractedIssueId} status to "${stateName}"\n${issue.url}`;
+                } else {
+                  response = `❌ Failed to update issue ${extractedIssueId}.`;
                 }
               } else {
                 response = `❌ State "${stateName}" not found.`;
+              }
+            } else {
+              response = `❌ Could not find team for issue ${extractedIssueId}.`;
+            }
+          } else {
+            // No state provided - check if user is asking specifically about assignee
+            const questionLower = state.question.toLowerCase();
+            const isAssigneeQuery = questionLower.includes('who') && 
+                                   (questionLower.includes('assigned') || questionLower.includes('assignee'));
+            
+            if (isAssigneeQuery) {
+              // Focused response for assignee queries
+              if (issue.assignee) {
+                response = `👤 *${issue.identifier} - ${issue.title}*\n\n` +
+                          `*Assigned to:* ${issue.assignee.name}${issue.assignee.email ? ` (${issue.assignee.email})` : ''}\n` +
+                          `🔗 ${issue.url}`;
+              } else {
+                response = `👤 *${issue.identifier} - ${issue.title}*\n\n` +
+                          `*Assigned to:* Unassigned\n` +
+                          `🔗 ${issue.url}`;
+              }
+            } else {
+              // Full issue details for general status queries
+              const assigneeInfo = issue.assignee 
+                ? `👤 *Assigned to:* ${issue.assignee.name}${issue.assignee.email ? ` (${issue.assignee.email})` : ''}`
+                : '👤 *Assigned to:* Unassigned';
+              
+              const priorityInfo = issue.priority ? `\n⚡ *Priority:* ${issue.priority}` : '';
+              
+              response = `📋 *${issue.identifier} - ${issue.title}*\n\n` +
+                        `📊 *Status:* ${issue.state.name} (${issue.state.type})\n` +
+                        `${assigneeInfo}${priorityInfo}\n` +
+                        `👥 *Team:* ${issue.team.name}\n` +
+                        `🔗 ${issue.url}`;
+              
+              if (issue.description) {
+                const descPreview = issue.description.length > 200 
+                  ? issue.description.substring(0, 200) + '...'
+                  : issue.description;
+                response += `\n\n📝 *Description:*\n${descPreview}`;
               }
             }
           }
@@ -583,11 +859,96 @@ export class LangGraphAgent {
         };
       }
 
+      // Check for user context if not already loaded (for general questions)
+      let context = { ...state.context };
+      const questionLower = state.question.toLowerCase();
+      
+      // Hardcoded check for Beatriz - ALWAYS prioritize JSON file over GitHub
+      const beatrizPatterns = [
+        'beatriz',
+        'how is beatriz solving',
+        'how is beatriz solving her task',
+        'beatriz solving',
+        'beatriz task',
+        'beatriz implementation',
+        'beatriz approach'
+      ];
+      
+      const isBeatrizQuestion = beatrizPatterns.some(pattern => questionLower.includes(pattern));
+      
+      if (isBeatrizQuestion) {
+        const beatrizContext = this.userContextService.getUserContext('beatriz');
+        if (beatrizContext) {
+          console.log(`📋 [LangGraph] Found user context for: Beatriz (hardcoded for question: "${state.question}")`);
+          // Override context with ONLY Beatriz context - don't use GitHub repo info
+          context = {
+            userContext: beatrizContext
+          };
+        } else {
+          console.log(`⚠️  Beatriz question detected but context not found`);
+        }
+      } else if (!context.userContext) {
+        // Try multiple patterns to catch different question formats for other users
+        const patterns = [
+          /(?:how|what).*(?:is|are|does|did).*(\w+).*(?:implementing|solving|working|doing|building|creating|developing|approach)/i,
+          /(\w+).*(?:is|are|does|did).*(?:implementing|solving|working|doing|building|creating|developing)/i,
+          /(?:how|what).*(\w+).*(?:implementation|solution|approach|method)/i,
+        ];
+        
+        for (const pattern of patterns) {
+          const userMatch = state.question.match(pattern);
+          if (userMatch && userMatch[1]) {
+            const userName = userMatch[1];
+            // Skip common words
+            if (!['the', 'this', 'that', 'these', 'those', 'exactly', 'currently'].includes(userName.toLowerCase())) {
+              const userContext = this.userContextService.getUserContext(userName);
+              if (userContext) {
+                console.log(`📋 [LangGraph] Found user context for: ${userName} (in generateResponse)`);
+                context.userContext = userContext;
+                break; // Found a match, stop trying other patterns
+              }
+            }
+          }
+        }
+      }
+
+      // If there's an error but we have Linear context, still try to generate response
+      if (state.error && (state.question.toLowerCase().includes('linear') || state.searchMode === 'linear')) {
+        console.log('⚠️  Error occurred but continuing with Linear context');
+        // Clear the error so we can still generate a response
+        const cleanState = { ...state, error: undefined, context };
+        const response = await this.llmService.answerQuestionWithContext(
+          cleanState.question,
+          cleanState.intent!,
+          cleanState.context
+        );
+        return {
+          response: response || 'I could not generate a response. Please try again.',
+          step: 'completed',
+          toolsUsed: ['generateResponse'],
+        };
+      }
+
       const response = await this.llmService.answerQuestionWithContext(
         state.question,
         state.intent,
-        state.context
+        context // Use updated context with userContext if found
       );
+
+      // Check if response contains GitHub error and we're doing a Linear query
+      if (response && (state.question.toLowerCase().includes('linear') || state.searchMode === 'linear')) {
+        if (response.toLowerCase().includes('github') && response.toLowerCase().includes('error')) {
+          console.log('⚠️  Response contains GitHub error, using fallback');
+          const fallbackResponse = this.llmService.generateFallbackResponse(state.intent, state.context);
+          if (fallbackResponse && !fallbackResponse.toLowerCase().includes('github')) {
+            return {
+              response: fallbackResponse,
+              step: 'completed',
+              toolsUsed: ['generateResponse'],
+            };
+          }
+        }
+      }
 
       return {
         response: response || 'I could not generate a response. Please try again.',
@@ -596,6 +957,17 @@ export class LangGraphAgent {
       };
     } catch (error: any) {
       console.error('❌ Error generating response:', error);
+      // For Linear queries, try fallback response
+      if (state.question.toLowerCase().includes('linear') || state.searchMode === 'linear') {
+        const fallbackResponse = this.llmService.generateFallbackResponse(state.intent!, state.context);
+        if (fallbackResponse && !fallbackResponse.toLowerCase().includes('github')) {
+          return {
+            response: fallbackResponse,
+            step: 'completed',
+            toolsUsed: ['generateResponse'],
+          };
+        }
+      }
       return {
         response: 'Sorry, I encountered an error generating a response. Please try again.',
         step: 'completed',
@@ -625,12 +997,17 @@ export class LangGraphAgent {
   /**
    * Run the agent with a question
    */
-  async run(question: string): Promise<string> {
+  async run(question: string, conversationHistory: ConversationMessage[] = []): Promise<string> {
     const initialState: any = {
       question,
       originalQuestion: question,
       searchMode: 'both',
-      context: {},
+      context: {
+        conversationHistory: conversationHistory.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        })),
+      },
       step: 'start',
       toolsUsed: [],
       intent: undefined,
