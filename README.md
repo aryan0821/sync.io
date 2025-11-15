@@ -151,11 +151,26 @@ npm install
 
 #### For Claude AI (Email Analysis):
 
+**Claude AI is used exclusively for email relevance analysis** to prevent spam in Slack. It analyzes each unread email to determine if it's relevant to project management before forwarding.
+
 1. Go to [console.anthropic.com](https://console.anthropic.com)
 2. Sign up or log in
 3. Navigate to **API Keys**
 4. Click **"Create Key"**
 5. Copy the key (starts with `sk-ant-`)
+6. Add to `.env` as `CLAUDE_API_KEY`
+
+**How Claude is used for emails:**
+- **Purpose**: Analyzes email relevance to prevent spam in Slack
+- **Input**: Email subject, sender, and content preview (first 500 chars)
+- **Output**: Relevance score (0.0-1.0), reasoning, and category
+- **Decision**: Only emails above confidence threshold (default: 0.6) are forwarded
+- **Model**: Uses Claude Sonnet 4.5 for analysis
+- **Fallback**: If Claude API is unavailable, uses keyword-based fallback analysis
+
+**What Claude analyzes:**
+- ✅ Relevant: Task assignments, bug reports, meetings, code reviews, project updates
+- ❌ Not Relevant: Marketing emails, newsletters, spam, personal emails, social notifications
 
 ### 6. Configure Environment Variables
 
@@ -600,12 +615,28 @@ Enable verbose logging by checking terminal output. All services log their opera
 
 ### Email Relevance Analysis
 
-The bot uses Claude AI to analyze emails and determine if they should be forwarded to Slack. Factors considered:
-- Email subject and content
-- Sender information
-- Urgency indicators
-- Project/work-related keywords
-- Customizable confidence threshold
+The bot uses **Claude AI** to analyze emails and determine if they should be forwarded to Slack. Claude analyzes each email's:
+- **Subject line**: Extracts key topics and urgency indicators
+- **Sender information**: Identifies important contacts and relationships
+- **Content preview**: Analyzes first 500 characters for relevance
+- **Context matching**: Matches against project/work-related keywords
+
+**How it works:**
+1. Bot receives unread email from Outlook/Microsoft Graph
+2. Extracts subject, sender, and content preview (first 500 chars)
+3. Sends to Claude AI with prompt asking for relevance analysis
+4. Claude returns:
+   - `isRelevant`: Boolean indicating if email should be forwarded
+   - `confidence`: Score from 0.0 to 1.0
+   - `reasoning`: Explanation of why it's relevant or not
+   - `category`: Optional categorization (e.g., "urgent", "project-related")
+5. Only emails above the confidence threshold are forwarded to Slack
+
+**Claude API Integration:**
+- Uses Anthropic's Claude API for email analysis
+- Configurable confidence threshold (default: 0.6)
+- Provides reasoning for transparency
+- Handles API errors gracefully with fallback behavior
 
 ### Manual Email Check
 
@@ -663,6 +694,10 @@ send email to user@example.com subject: Meeting Tomorrow body: Let's meet at 2pm
 
 - **OpenAI GPT-4o-mini**: Intent classification and natural language response generation
 - **Claude AI**: Email relevance analysis and intelligent filtering
+  - Analyzes email subject, sender, and content to determine relevance
+  - Returns confidence scores and reasoning for email forwarding decisions
+  - Prevents email spam in Slack by only forwarding important emails
+  - Configurable confidence threshold for filtering sensitivity
 
 ### API Integrations
 
@@ -714,7 +749,11 @@ send email to user@example.com subject: Meeting Tomorrow body: Let's meet at 2pm
 
 **Solution**: Integrated Claude AI to analyze email relevance with configurable confidence thresholds. Only emails above the threshold are forwarded, with reasoning provided.
 
-**Implementation**: `ClaudeService` in `src/services/claude.ts` analyzes email subject, sender, and content preview to determine relevance score.
+**Implementation**: `ClaudeService` in `src/services/claude.ts` uses Anthropic's Claude API (Claude Sonnet 4.5) to analyze email subject, sender, and content preview. The service:
+- Sends email metadata to Claude with a prompt asking for relevance analysis
+- Receives JSON response with `isRelevant`, `confidence`, `reasoning`, and `category`
+- Only forwards emails above the configurable confidence threshold
+- Falls back to keyword-based analysis if Claude API is unavailable
 
 ### Challenge 4: Work Conflict Detection
 
