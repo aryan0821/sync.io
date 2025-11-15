@@ -1,5 +1,6 @@
 import { App } from '@slack/bolt';
 import * as dotenv from 'dotenv';
+import * as cron from 'node-cron';
 import { GitHubService } from './services/github';
 import { LinearService } from './services/linear';
 import { LLMService } from './services/llm';
@@ -7,6 +8,7 @@ import { QuestionHandler } from './handlers/questionHandler';
 import { SyncService } from './services/syncService';
 import { MemoryService } from './services/memoryService';
 import { UserContextService } from './services/userContextService';
+import { EmailHandler } from './handlers/emailHandler';
 import { setupWebhookServer } from './webhook';
 
 // Load environment variables
@@ -74,6 +76,9 @@ if (linearService) {
   }
 }
 
+// Store email handler globally so we can access it from message handler
+let globalEmailHandler: any = null;
+
 // Listen for ALL messages (more permissive)
 app.message(async ({ message, say }: any) => {
   // Debug logging - this should fire for ANY message
@@ -122,6 +127,82 @@ app.message(async ({ message, say }: any) => {
   console.log('✅ Processing message...');
 
   try {
+    // Check for email commands first
+    const lowerText = text.toLowerCase();
+    
+    if (lowerText.includes('check emails') || lowerText.includes('check email')) {
+      if (globalEmailHandler) {
+        await say('🔍 Checking emails now...');
+        const results = await globalEmailHandler.processUnreadEmails();
+        
+        if (results.total === 0) {
+          await say('✅ No unread emails found.');
+        } else {
+          let message = `📧 *Found ${results.total} email(s)*\n`;
+          message += `✅ Forwarded ${results.forwarded} to Slack\n\n`;
+          
+          // Show first 5 emails
+          const emailsToShow = results.emails.slice(0, 5);
+          emailsToShow.forEach((email: any, index: number) => {
+            const icon = email.forwarded ? '✅' : (email.relevant ? '⚠️' : '⏭️');
+            message += `${icon} *${email.subject}*\n`;
+            message += `   From: ${email.from}\n`;
+            message += `   ${email.reason}\n\n`;
+          });
+          
+          if (results.emails.length > 5) {
+            message += `... and ${results.emails.length - 5} more emails`;
+          }
+          
+          await say(message);
+        }
+      } else {
+        await say('⚠️ Email forwarding is not configured.');
+      }
+      return;
+    }
+
+    // Send email command
+    if (lowerText.includes('send email to')) {
+      if (!globalEmailHandler) {
+        await say('⚠️ Email service is not configured.');
+        return;
+      }
+
+      try {
+        // Parse: "send email to user@example.com subject: Test body: Message"
+        const emailMatch = text.match(/send email to\s+([^\s]+)(?:\s+subject:\s*([^]+?))?(?:\s+body:\s*([^]+))?$/i);
+        
+        if (!emailMatch) {
+          await say('❌ Invalid format.\n\nUse: `send email to user@example.com subject: Your Subject body: Your message`');
+          return;
+        }
+
+        const toEmail = emailMatch[1].replace(/<mailto:|>/g, '').split('|')[0]; // Clean Slack mailto links
+        const subject = emailMatch[2]?.trim() || 'Message from Slack Bot';
+        const body = emailMatch[3]?.trim() || '';
+
+        if (!body) {
+          await say('❌ Email body is required.\n\nUse: `send email to user@example.com subject: Your Subject body: Your message`');
+          return;
+        }
+
+        await say(`📤 Sending email to ${toEmail}...`);
+        
+        const sent = await globalEmailHandler.sendEmail(toEmail, subject, body);
+        
+        if (sent) {
+          await say(`✅ Email sent successfully!\n\n*To:* ${toEmail}\n*Subject:* ${subject}`);
+        } else {
+          await say(`❌ Failed to send email. Check bot logs for details.`);
+        }
+      } catch (error) {
+        console.error('Error sending email:', error);
+        await say(`❌ Error: ${error}`);
+      }
+      return;
+    }
+
     // Clean the text - remove bot mentions and extra whitespace
     let cleanText = text.trim();
     if (botUserId) {
@@ -370,6 +451,56 @@ setInterval(() => {
         });
       } else {
         console.log('⚠️  Webhooks not configured. Set SLACK_USER_ID and GITHUB_USERNAME in .env to enable.\n');
+      }
+
+      // Setup email forwarding if configured (using Azure AD / Microsoft Graph)
+      const outlookClientId = process.env.OUTLOOK_CLIENT_ID;
+      const outlookClientSecret = process.env.OUTLOOK_CLIENT_SECRET;
+      const outlookTenantId = process.env.OUTLOOK_TENANT_ID;
+      const outlookUserEmail = process.env.OUTLOOK_USER_EMAIL;
+      const slackChannel = process.env.SLACK_CHANNEL; // Channel to post emails to
+      const emailCheckInterval = process.env.EMAIL_CHECK_INTERVAL || '*/5 * * * *'; // Default: every 5 minutes
+
+      if (outlookClientId && outlookClientSecret && outlookTenantId && outlookUserEmail && slackChannel) {
+        
+        console.log('📧 Email monitoring is configured (Azure AD / Microsoft Graph)');
+        console.log(`📬 Will post to Slack channel: ${slackChannel}`);
+        
+        const emailHandler = new EmailHandler(
+          outlookClientId,
+          outlookClientSecret,
+          outlookTenantId,
+          outlookUserEmail,
+          process.env.CLAUDE_API_KEY,
+          app,
+          slackChannel,
+          parseFloat(process.env.CONFIDENCE_THRESHOLD || '0.6')
+        );
+
+        // Store globally for command access
+        globalEmailHandler = emailHandler;
+
+        // Verify connections
+        const connectionsOk = await emailHandler.verifyConnections();
+        
+        if (connectionsOk) {
+          console.log('✅ Email services ready\n');
+          
+          // Schedule email checking
+          console.log(`⏰ Email check scheduled: ${emailCheckInterval}`);
+          cron.schedule(emailCheckInterval, async () => {
+            console.log('\n⏰ Running scheduled email check...');
+            await emailHandler.processUnreadEmails();
+          });
+
+          // Run initial check
+          console.log('🚀 Running initial email check...');
+          await emailHandler.processUnreadEmails();
+        } else {
+          console.log('❌ Email service connections failed. Email monitoring disabled.\n');
+        }
+      } else {
+        console.log('⚠️  Email monitoring not configured. See README for setup instructions.\n');
       }
     } catch (authError) {
       console.log('⚠️  Could not fetch bot user ID. Bot will still work without it.');
