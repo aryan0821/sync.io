@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { 
-  Send, Github, Code, MessageSquare, BarChart2, Search, 
+import {
+  Send, Github, Code, MessageSquare, BarChart2, Search,
   Zap, Clock, Users, GitBranch, CheckCircle, AlertCircle,
   TrendingUp, Activity, Terminal, BookOpen, Sparkles
 } from 'lucide-react';
+
+import IssueTransitionAnimation from './IssueTransitionAnimation.jsx'
 
 const SyncioKnowledgeBase = () => {
   const [messages, setMessages] = useState([
@@ -278,172 +280,180 @@ Here are some things you can ask:
         </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-gray-900/30 border-b border-gray-800 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-blue-400" />
-                Unified DevOps Knowledge Base
-              </h2>
-              <p className="text-sm text-gray-400 mt-1">
-                Ask questions across GitHub, Linear, and your codebase - zero context switching
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="px-3 py-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                <span className="text-xs text-blue-400 font-medium">⚡ 2.5hrs saved today</span>
+      <div className="flex-1 flex">
+        {/* Left: Chat Messages */}
+        <div className="flex-1 flex flex-col">
+          {/* Header */}
+          <div className="bg-gray-900/30 border-b border-gray-800 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-blue-400" />
+                  Unified DevOps Knowledge Base
+                </h2>
+                <p className="text-sm text-gray-400 mt-1">
+                  Ask questions across GitHub, Linear, and your codebase - zero context switching
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                  <span className="text-xs text-blue-400 font-medium">⚡ 2.5hrs saved today</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-4xl mx-auto space-y-6">
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
-              >
-                {/* Avatar */}
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  message.role === 'user'
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-4xl mx-auto space-y-6">
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                >
+                  {/* Avatar */}
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${message.role === 'user'
                     ? 'bg-gradient-to-br from-gray-600 to-gray-800'
                     : 'bg-gradient-to-br from-blue-500 to-purple-600'
-                }`}>
-                  {message.role === 'user' ? (
-                    <span className="text-white text-sm font-semibold">U</span>
-                  ) : (
-                    <Zap className="w-5 h-5 text-white" />
-                  )}
-                </div>
+                    }`}>
+                    {message.role === 'user' ? (
+                      <span className="text-white text-sm font-semibold">U</span>
+                    ) : (
+                      <Zap className="w-5 h-5 text-white" />
+                    )}
+                  </div>
 
-                {/* Message Content */}
-                <div className={`flex-1 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  <div className={`inline-block max-w-3xl rounded-2xl px-5 py-4 ${
-                    message.role === 'user'
+                  {/* Message Content */}
+                  <div className={`flex-1 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
+                    <div className={`inline-block max-w-3xl rounded-2xl px-5 py-4 ${message.role === 'user'
                       ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white'
                       : 'bg-gray-800/80 border border-gray-700/50 text-gray-100'
-                  }`}>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
-                      {message.content.split('\n').map((line, i) => {
-                        if (line.includes('**')) {
-                          const parts = line.split('**');
-                          return (
-                            <div key={i}>
-                              {parts.map((part, j) =>
-                                j % 2 === 1 ? <strong key={j} className="font-bold">{part}</strong> : part
-                              )}
-                            </div>
-                          );
-                        }
-                        if (line.startsWith('```')) return null;
-                        if (line.trim().startsWith('•')) {
-                          return <div key={i} className="ml-2 my-0.5">{line}</div>;
-                        }
-                        if (line.trim().startsWith('✅') || line.trim().startsWith('🔄')) {
-                          return <div key={i} className="my-0.5">{line}</div>;
-                        }
-                        return <div key={i}>{line || <br />}</div>;
-                      })}
+                      }`}>
+                      <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {message.content.split('\n').map((line, i) => {
+                          if (line.includes('**')) {
+                            const parts = line.split('**');
+                            return (
+                              <div key={i}>
+                                {parts.map((part, j) =>
+                                  j % 2 === 1 ? <strong key={j} className="font-bold">{part}</strong> : part
+                                )}
+                              </div>
+                            );
+                          }
+                          if (line.startsWith('```')) return null;
+                          if (line.trim().startsWith('•')) {
+                            return <div key={i} className="ml-2 my-0.5">{line}</div>;
+                          }
+                          if (line.trim().startsWith('✅') || line.trim().startsWith('🔄')) {
+                            return <div key={i} className="my-0.5">{line}</div>;
+                          }
+                          return <div key={i}>{line || <br />}</div>;
+                        })}
+                      </div>
+                    </div>
+                    <div className={`text-xs text-gray-500 mt-1 px-1 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
+                      {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                  <div className={`text-xs text-gray-500 mt-1 px-1 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              ))}
+
+              {/* Typing Indicator */}
+              {isTyping && (
+                <div className="flex gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+                    <Zap className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="bg-gray-800/80 border border-gray-700/50 rounded-2xl px-5 py-4">
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-
-            {/* Typing Indicator */}
-            {isTyping && (
-              <div className="flex gap-4">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-                  <Zap className="w-5 h-5 text-white" />
-                </div>
-                <div className="bg-gray-800/80 border border-gray-700/50 rounded-2xl px-5 py-4">
-                  <div className="flex gap-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        {messages.filter(m => m.role === 'user').length === 0 && (
-          <div className="px-6 pb-4">
-            <div className="max-w-4xl mx-auto">
-              <h3 className="text-xs font-semibold text-gray-400 mb-3">Try these queries:</h3>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  "What is aryan0821 currently working on?",
-                  "Show me the status of sync.io project",
-                  "Search for webhook in the codebase",
-                  "Who is working on issue #4?"
-                ].map((query, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setInput(query)}
-                    className="text-left p-3 bg-gray-800/50 border border-gray-700/50 rounded-xl hover:border-blue-500/50 hover:bg-gray-800/80 transition-all text-sm text-gray-300 hover:text-white group"
-                  >
-                    <Search className="w-4 h-4 inline mr-2 text-gray-500 group-hover:text-blue-400" />
-                    {query}
-                  </button>
-                ))}
-              </div>
+              )}
             </div>
           </div>
-        )}
 
-        {/* Input Area */}
-        <div className="bg-gray-900/50 border-t border-gray-800 p-6">
-          <div className="max-w-4xl mx-auto">
-            <form onSubmit={handleSubmit}>
-              <div className="flex items-end gap-3 bg-gray-800/50 rounded-2xl border border-gray-700/50 focus-within:border-blue-500/50 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSubmit(e);
-                    }
-                  }}
-                  placeholder="Ask about your GitHub, Linear, or codebase... (e.g., 'What is aryan working on?')"
-                  className="flex-1 bg-transparent px-5 py-4 outline-none resize-none min-h-[56px] max-h-[200px] text-gray-100 placeholder-gray-500"
-                  rows={1}
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isTyping}
-                  className={`mb-3 mr-3 p-3 rounded-xl transition-all ${
-                    input.trim() && !isTyping
+          {/* Quick Actions */}
+          {messages.filter(m => m.role === 'user').length === 0 && (
+            <div className="px-6 pb-4">
+              <div className="max-w-4xl mx-auto">
+                <h3 className="text-xs font-semibold text-gray-400 mb-3">Try these queries:</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    "What is aryan0821 currently working on?",
+                    "Show me the status of sync.io project",
+                    "Search for webhook in the codebase",
+                    "Who is working on issue #4?"
+                  ].map((query, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setInput(query)}
+                      className="text-left p-3 bg-gray-800/50 border border-gray-700/50 rounded-xl hover:border-blue-500/50 hover:bg-gray-800/80 transition-all text-sm text-gray-300 hover:text-white group"
+                    >
+                      <Search className="w-4 h-4 inline mr-2 text-gray-500 group-hover:text-blue-400" />
+                      {query}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Input Area */}
+          <div className="bg-gray-900/50 border-t border-gray-800 p-6">
+            <div className="max-w-4xl mx-auto">
+              <form onSubmit={handleSubmit}>
+                <div className="flex items-end gap-3 bg-gray-800/50 rounded-2xl border border-gray-700/50 focus-within:border-blue-500/50 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                      }
+                    }}
+                    placeholder="Ask about your GitHub, Linear, or codebase... (e.g., 'What is aryan working on?')"
+                    className="flex-1 bg-transparent px-5 py-4 outline-none resize-none min-h-[56px] max-h-[200px] text-gray-100 placeholder-gray-500"
+                    rows={1}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!input.trim() || isTyping}
+                    className={`mb-3 mr-3 p-3 rounded-xl transition-all ${input.trim() && !isTyping
                       ? 'bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25'
                       : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                  }`}
-                >
-                  <Send className="w-5 h-5" />
-                </button>
-              </div>
-            </form>
-            <div className="flex items-center justify-between mt-3 px-2">
-              <p className="text-xs text-gray-500">
-                Use <span className="text-blue-400 font-mono">/github</span>, <span className="text-blue-400 font-mono">/linear</span>, or <span className="text-blue-400 font-mono">/code</span> to search specific sources
-              </p>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Sparkles className="w-3 h-3" />
-                <span>Powered by GPT-4 + LangGraph</span>
+                      }`}
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </div>
+              </form>
+              <div className="flex items-center justify-between mt-3 px-2">
+                <p className="text-xs text-gray-500">
+                  Use <span className="text-blue-400 font-mono">/github</span>, <span className="text-blue-400 font-mono">/linear</span>, or <span className="text-blue-400 font-mono">/code</span> to search specific sources
+                </p>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <Sparkles className="w-3 h-3" />
+                  <span>Powered by GPT-4 + LangGraph</span>
+                </div>
               </div>
             </div>
           </div>
+
+
+
         </div>
+
+        {/* Right: Animation */}
+        <div className="w-96 border-l border-gray-800 flex items-center justify-center p-6">
+          <IssueTransitionAnimation />
+        </div>
+
       </div>
     </div>
   );

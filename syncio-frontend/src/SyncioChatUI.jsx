@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Github, Zap, Code, MessageSquare } from 'lucide-react';
+import IssueTransitionAnimation from './IssueTransitionAnimation.jsx'
 
 export default function SyncioChat() {
   const [messages, setMessages] = useState([
@@ -361,6 +362,8 @@ You can also use slash commands:
           </div>
         </div>
       </div>
+
+      <IssueTransitionAnimation />
     </div>
   );
 }
