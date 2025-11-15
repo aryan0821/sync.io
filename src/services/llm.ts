@@ -192,6 +192,18 @@ Only return valid JSON, no other text.`;
     try {
       // Build comprehensive context text
       let contextText = '';
+      
+      // Debug: Log what Linear context we have
+      if (intent.action === 'general') {
+        console.log('🔍 [LLM] Linear context check:', {
+          hasProjects: !!context.linearProjects,
+          projectsCount: context.linearProjects?.length || 0,
+          hasTeams: !!context.linearTeams,
+          teamsCount: context.linearTeams?.length || 0,
+          hasIssues: !!context.linearIssues,
+          issuesCount: context.linearIssues?.length || 0,
+        });
+      }
 
       // Repository information
       if (context.repoInfo) {
@@ -526,6 +538,10 @@ Only return valid JSON, no other text.`;
           }
         });
         contextText += `\n`;
+      } else if (intent.action === 'general' && context.repoInfo) {
+        // For general questions, mention that Linear projects exist but weren't loaded
+        contextText += `# Linear Projects\n`;
+        contextText += `(Linear projects are available but not loaded in this context)\n\n`;
       }
 
       // Store question in context for fallback responses
@@ -652,7 +668,7 @@ Only return valid JSON, no other text.`;
           },
           {
             role: 'user',
-            content: `Context from GitHub repository and Linear:\n\n${contextText || 'No context available.'}${conversationContext}\n\nUser Question: ${question}\n\nIMPORTANT: ${context.userContext ? 'PRIORITY: Use the user context (from JSON file) as the PRIMARY source. Ignore repository information if it conflicts with user context.' : 'Only use information from the context provided. Do NOT make up or invent information.'} If the context shows no Linear issues, projects, or teams, say so clearly.${conversationContext ? ' Use the conversation history to provide context-aware responses.' : ''}`
+            content: `Context from GitHub repository and Linear:\n\n${contextText || 'No context available.'}${conversationContext}\n\nUser Question: ${question}\n\nIMPORTANT: ${context.userContext ? 'PRIORITY: Use the user context (from JSON file) as the PRIMARY source. Ignore repository information if it conflicts with user context.' : 'Use ALL available context from both GitHub and Linear. If Linear projects, teams, or issues are provided in the context, you MUST include them in your response. Combine GitHub repository information with Linear project management data to give a comprehensive answer.'} If the context shows no Linear issues, projects, or teams, say so clearly.${conversationContext ? ' Use the conversation history to provide context-aware responses.' : ''}`
           }
         ],
         temperature: 0.7,

@@ -264,14 +264,25 @@ export class LangGraphAgent {
       return 'linear_only';
     }
 
-    // If action is "general" or "search" but question mentions "linear", force Linear
-    if ((action === 'general' || action === 'search') && question.includes('linear')) {
-      console.log('🔄 Overriding general/search action to Linear because "linear" is mentioned');
-      return 'linear_only';
+    // If action is "general" or "search", intelligently route based on question content
+    if (action === 'general' || action === 'search') {
+      // If question explicitly mentions "linear", prioritize Linear
+      if (question.includes('linear')) {
+        console.log('🔄 Overriding general/search action to Linear because "linear" is mentioned');
+        return 'linear_only';
+      }
+      // If question explicitly mentions "github" or "repo", prioritize GitHub
+      if (question.includes('github') || question.includes('repo') || question.includes('repository')) {
+        console.log('🔄 Overriding general/search action to GitHub because "github/repo" is mentioned');
+        return 'github_only';
+      }
+      // For general questions without explicit mentions, gather both by default
+      console.log('🔄 General question - will gather both GitHub and Linear context');
+      return 'both';
     }
 
-    // If no intent or general, go straight to generation (but not if Linear is mentioned)
-    if (!state.intent || (action === 'general' && !question.includes('linear'))) {
+    // If no intent, go straight to generation
+    if (!state.intent) {
       return 'generate';
     }
 
@@ -281,6 +292,7 @@ export class LangGraphAgent {
     } else if (searchMode === 'linear') {
       return 'linear_only';
     } else {
+      // Default to both for unknown actions
       return 'both';
     }
   }
@@ -478,12 +490,19 @@ export class LangGraphAgent {
           break;
 
         case 'general':
-          // For general questions, try to search
+          // For general questions, try to search GitHub
           if (state.question) {
             const searchTerms = state.question.match(/\b(\w{4,})\b/g)?.slice(0, 3);
             if (searchTerms && searchTerms.length > 0) {
               context.searchResults = await this.githubService.searchCode(searchTerms.join(' '));
             }
+          }
+          // Also get recent issues and commits for general questions
+          try {
+            context.issues = await this.githubService.getOpenIssues(5);
+            context.commits = await this.githubService.getRecentCommits(5);
+          } catch (error) {
+            console.warn('⚠️  Could not get issues/commits for general question (non-fatal)');
           }
           break;
       }
@@ -520,13 +539,16 @@ export class LangGraphAgent {
     console.log('📋 [LangGraph] Gathering Linear context...');
     
     if (!this.linearService) {
+      console.log('⚠️  Linear service not available, skipping Linear context');
       return {
         step: 'linear_context_gathered',
         toolsUsed: ['gatherLinearContext'],
       };
     }
 
+    // IMPORTANT: Merge with existing context to preserve GitHub data
     const context: any = { ...state.context };
+    console.log('🔍 [LangGraph] Existing context keys:', Object.keys(context));
     const intent = state.intent!;
     const action = intent.action;
     const question = state.question.toLowerCase();
@@ -584,33 +606,33 @@ export class LangGraphAgent {
 
         case 'search':
         case 'general':
-          // For general searches with "linear" keyword, get Linear projects/teams/issues
+          // For general questions, always gather Linear context (projects, teams, issues)
           const lowerQuestion = state.question.toLowerCase();
-          if (lowerQuestion.includes('linear')) {
-            if (lowerQuestion.includes('project')) {
-              context.linearProjects = await this.linearService.getProjects();
-              console.log('✅ Retrieved Linear projects for general query with "linear" keyword');
-            } else if (lowerQuestion.includes('team') || lowerQuestion.includes('teammate')) {
-              context.linearTeams = await this.linearService.getTeams();
-              console.log('✅ Retrieved Linear teams for general query with "linear" keyword');
-            } else if (lowerQuestion.includes('issue')) {
-              context.linearIssues = await this.linearService.getMyIssues(10);
-              console.log('✅ Retrieved Linear issues for general query with "linear" keyword');
-            } else {
-              // Default: get projects if "linear" is mentioned
-              context.linearProjects = await this.linearService.getProjects();
-              console.log('✅ Retrieved Linear projects for general query with "linear" keyword');
-            }
-          } else {
-            // For non-Linear general searches, search Linear issues
-            if (state.question) {
-              const allIssues = await this.linearService.getIssues(undefined, 50);
-              context.linearIssues = allIssues.filter(issue =>
-                issue.title.toLowerCase().includes(state.question.toLowerCase()) ||
-                (issue.description && issue.description.toLowerCase().includes(state.question.toLowerCase()))
-              );
-            }
+          
+          // Get Linear projects
+          try {
+            context.linearProjects = await this.linearService.getProjects();
+            console.log('✅ Retrieved Linear projects for general query');
+          } catch (error) {
+            console.warn('⚠️  Could not get Linear projects (non-fatal)');
           }
+          
+          // Get Linear teams
+          try {
+            context.linearTeams = await this.linearService.getTeams();
+            console.log('✅ Retrieved Linear teams for general query');
+          } catch (error) {
+            console.warn('⚠️  Could not get Linear teams (non-fatal)');
+          }
+          
+          // Get Linear issues (recent/active ones)
+          try {
+            context.linearIssues = await this.linearService.getIssues(undefined, 10);
+            console.log('✅ Retrieved Linear issues for general query');
+          } catch (error) {
+            console.warn('⚠️  Could not get Linear issues (non-fatal)');
+          }
+          
           break;
 
         case 'issues':
@@ -619,6 +641,13 @@ export class LangGraphAgent {
           break;
       }
 
+      // Debug: Log what Linear data we gathered
+      console.log('✅ [LangGraph] Linear context gathered:', {
+        projects: context.linearProjects?.length || 0,
+        teams: context.linearTeams?.length || 0,
+        issues: context.linearIssues?.length || 0,
+      });
+      
       return {
         context,
         step: 'linear_context_gathered',
@@ -626,9 +655,10 @@ export class LangGraphAgent {
       };
     } catch (error: any) {
       console.error('❌ Error gathering Linear context:', error);
+      // Don't fail completely - return existing context
       return {
-        error: error.message,
-        step: 'error',
+        context: state.context, // Preserve existing context (GitHub data)
+        step: 'linear_context_gathered',
         toolsUsed: ['gatherLinearContext'],
       };
     }
@@ -929,6 +959,19 @@ export class LangGraphAgent {
         };
       }
 
+      // Debug: Log context before sending to LLM
+      if (state.intent?.action === 'general') {
+        console.log('🔍 [LangGraph] Context being sent to LLM:', {
+          hasRepoInfo: !!context.repoInfo,
+          hasLinearProjects: !!context.linearProjects,
+          linearProjectsCount: context.linearProjects?.length || 0,
+          hasLinearTeams: !!context.linearTeams,
+          linearTeamsCount: context.linearTeams?.length || 0,
+          hasLinearIssues: !!context.linearIssues,
+          linearIssuesCount: context.linearIssues?.length || 0,
+        });
+      }
+      
       const response = await this.llmService.answerQuestionWithContext(
         state.question,
         state.intent,
@@ -982,11 +1025,59 @@ export class LangGraphAgent {
   private shouldGatherLinear(state: AgentState): string {
     const searchMode = state.searchMode;
     const action = state.intent?.action || 'general';
+    const question = state.question.toLowerCase();
 
-    // If search mode is 'both' and we have Linear service, gather Linear context too
-    if (searchMode === 'both' && this.linearService) {
-      // For certain actions, also gather Linear context
-      if (['search', 'general', 'issues'].includes(action)) {
+    // Skip Linear for Beatriz questions (they use JSON file only)
+    const beatrizPatterns = [
+      'beatriz',
+      'how is beatriz solving',
+      'how is beatriz solving her task',
+      'beatriz solving',
+      'beatriz task',
+      'beatriz implementation',
+      'beatriz approach'
+    ];
+    
+    const isBeatrizQuestion = beatrizPatterns.some(pattern => question.includes(pattern));
+    if (isBeatrizQuestion) {
+      return 'generate'; // Skip Linear for Beatriz
+    }
+
+    // If we have Linear service, intelligently decide when to gather Linear context
+    if (this.linearService) {
+      // If searchMode is explicitly 'linear', always gather Linear
+      if (searchMode === 'linear') {
+        console.log('🔄 Gathering Linear context (searchMode is linear)');
+        return 'gather_linear';
+      }
+      
+      // If searchMode is explicitly 'github', skip Linear
+      if (searchMode === 'github') {
+        return 'generate';
+      }
+      
+      // For general/search actions, gather Linear context (unless question explicitly mentions only GitHub/repo)
+      if ((action === 'general' || action === 'search') && !question.includes('github') && !question.includes('repo') && !question.includes('repository')) {
+        console.log('🔄 Gathering Linear context for general/search question');
+        return 'gather_linear';
+      }
+      
+      // For issues action, also gather Linear issues
+      if (action === 'issues') {
+        console.log('🔄 Gathering Linear context for issues action');
+        return 'gather_linear';
+      }
+      
+      // If searchMode is 'both', always gather Linear (check this before other conditions)
+      if (searchMode === 'both') {
+        console.log('🔄 Gathering Linear context (searchMode is both)');
+        return 'gather_linear';
+      }
+      
+      // For Linear-specific actions, gather Linear context
+      const linearOnlyActions = ['linear_issues', 'linear_teams', 'linear_projects', 'linear_search', 'linear_state'];
+      if (linearOnlyActions.includes(action)) {
+        console.log('🔄 Gathering Linear context for Linear-specific action');
         return 'gather_linear';
       }
     }
