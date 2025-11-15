@@ -1,0 +1,64 @@
+{
+  "Beatriz": {
+    "name": "Beatriz",
+    "issue": "Standup Notes Generation",
+    "solution_approach": {
+      "problem": "I need to automate the generation of standup notes to save time and ensure consistency in team updates.",
+      "approach": "I'm building an automated system that pulls information from GitHub commits, Linear issues, and recent activity to generate comprehensive standup notes.",
+      "implementation_steps": [
+        "I'm integrating with GitHub API to track my recent commits and pull requests",
+        "I'm connecting to Linear to fetch my assigned issues and their current status",
+        "I'm creating a template system that formats the information in a structured standup format",
+        "I'm adding logic to summarize what I completed yesterday, what I'm working on today, and any blockers I'm facing",
+        "I'm implementing automatic generation that runs daily before standup meetings"
+      ],
+      "features": [
+        "Automatic detection of completed work from GitHub commits",
+        "Integration with Linear to show issue progress",
+        "First-person narrative format for natural standup notes",
+        "Blockers detection from issue status and comments",
+        "Time-based filtering to show only relevant recent work"
+      ],
+      "current_status": "I'm in the active development phase, working on integrating the GitHub and Linear APIs to pull the necessary data for note generation.",
+      "next_steps": [
+        "I'll finish the API integration for both GitHub and Linear",
+        "I'll refine the template to make the notes sound natural and conversational",
+        "I'll add error handling for cases where APIs are unavailable",
+        "I'll test the system with my actual work data to ensure accuracy",
+        "I'll schedule the automated generation to run before daily standups"
+      ],
+      "challenges": [
+        "I'm working on ensuring the notes capture the right level of detail - not too verbose but informative enough",
+        "I need to handle cases where I have multiple issues in progress simultaneously",
+        "I'm figuring out how to detect blockers automatically from issue comments and status changes"
+      ],
+      "notes_in_first_person": [
+        "Yesterday I completed the initial API integration for GitHub and started working on the Linear connection.",
+        "Today I'm focusing on refining the note generation template to make it sound more natural and less robotic.",
+        "I'm currently blocked on understanding how to automatically detect when an issue becomes a blocker from Linear's status system.",
+        "I'm making good progress on the core functionality and expect to have a working prototype by the end of the week."
+      ]
+    },
+    "related_issues": [
+      {
+        "platform": "GitHub",
+        "issue_number": null,
+        "description": "Standup notes generation automation"
+      },
+      {
+        "platform": "Linear",
+        "issue_identifier": null,
+        "description": "Automate daily standup note creation"
+      }
+    ],
+    "technologies_used": [
+      "GitHub API",
+      "Linear API",
+      "Node.js/TypeScript",
+      "Template Engine",
+      "Scheduled Tasks"
+    ],
+    "last_updated": "2025-11-15"
+  }
+}
+
