@@ -6,6 +6,7 @@
 import { StateGraph, Annotation } from '@langchain/langgraph';
 import { GitHubService } from '../services/github';
 import { LinearService } from '../services/linear';
+import { JiraService } from '../services/jira';
 import { LLMService, LLMIntent } from '../services/llm';
 
 /**
@@ -18,8 +19,8 @@ const AgentStateAnnotation = Annotation.Root({
   originalQuestion: Annotation<string>({
     reducer: (x: string, y: string) => y || x,
   }),
-  searchMode: Annotation<'both' | 'linear' | 'github'>({
-    reducer: (x: 'both' | 'linear' | 'github', y: 'both' | 'linear' | 'github') => y || x,
+  searchMode: Annotation<'both' | 'linear' | 'github' | 'jira'>({
+    reducer: (x: 'both' | 'linear' | 'github' | 'jira', y: 'both' | 'linear' | 'github' | 'jira') => y || x,
     default: () => 'both' as const,
   }),
   intent: Annotation<LLMIntent | undefined>({
@@ -46,6 +47,9 @@ const AgentStateAnnotation = Annotation.Root({
     linearProjects?: any[];
     linearSearchTerm?: string;
     linearState?: string;
+    jiraIssues?: any[];
+    jiraProjects?: any[];
+    jiraSearchTerm?: any[];
   }>({
     reducer: (x: any, y: any) => ({ ...x, ...y }),
     default: () => ({}),
@@ -74,16 +78,19 @@ export class LangGraphAgent {
   private graph: ReturnType<typeof this.buildGraph>;
   private githubService: GitHubService;
   private linearService: LinearService | null;
+  private jiraService: JiraService | null;
   private llmService: LLMService;
 
   constructor(
     githubService: GitHubService,
     linearService: LinearService | null,
-    llmService: LLMService
+    llmService: LLMService,
+    jiraService: JiraService | null
   ) {
     this.githubService = githubService;
     this.linearService = linearService;
     this.llmService = llmService;
+    this.jiraService = jiraService;
     this.graph = this.buildGraph();
   }
 
@@ -98,13 +105,14 @@ export class LangGraphAgent {
     workflow.addNode('understandIntent', this.understandIntent.bind(this));
     workflow.addNode('gatherGitHubContext', this.gatherGitHubContext.bind(this));
     workflow.addNode('gatherLinearContext', this.gatherLinearContext.bind(this));
+    workflow.addNode('gatherJiraContext', this.gatherJiraContext.bind(this));
     workflow.addNode('handleLinearMutation', this.handleLinearMutation.bind(this));
     workflow.addNode('generateResponse', this.generateResponse.bind(this));
 
     // Define edges - use string literals for START and END
     workflow.addEdge('__start__' as any, 'parseQuestion' as any);
     workflow.addEdge('parseQuestion' as any, 'understandIntent' as any);
-    
+
     // Conditional routing after understanding intent
     workflow.addConditionalEdges(
       'understandIntent' as any,
@@ -113,6 +121,7 @@ export class LangGraphAgent {
         'linear_mutation': 'handleLinearMutation',
         'github_only': 'gatherGitHubContext',
         'linear_only': 'gatherLinearContext',
+        'jira_only': 'gatherJiraContext',
         'both': 'gatherGitHubContext',
         'generate': 'generateResponse',
       } as any
@@ -130,6 +139,7 @@ export class LangGraphAgent {
 
     // After Linear context, generate response
     workflow.addEdge('gatherLinearContext' as any, 'generateResponse' as any);
+    workflow.addEdge('gatherJiraContext' as any, 'generateResponse' as any);
     workflow.addEdge('handleLinearMutation' as any, '__end__' as any);
     workflow.addEdge('generateResponse' as any, '__end__' as any);
 
@@ -142,8 +152,8 @@ export class LangGraphAgent {
   private async parseQuestion(state: AgentState): Promise<Partial<AgentState>> {
     console.log('🔍 [LangGraph] Parsing question...');
     const lowerQuestion = state.question.toLowerCase().trim();
-    
-    let searchMode: 'both' | 'linear' | 'github' = 'both';
+
+    let searchMode: 'both' | 'linear' | 'github' | 'jira' = 'both';
     let cleanQuestion = state.question;
 
     if (lowerQuestion.startsWith('/linear ')) {
@@ -152,11 +162,21 @@ export class LangGraphAgent {
     } else if (lowerQuestion.startsWith('/github ')) {
       searchMode = 'github';
       cleanQuestion = state.question.substring(8).trim();
-    } else if (lowerQuestion === '/linear') {
+    }
+
+    else if (lowerQuestion.startsWith('/jira ')) {
+      searchMode = 'jira';
+      cleanQuestion = state.question.substring(6).trim();
+    }
+
+    else if (lowerQuestion === '/linear') {
       searchMode = 'linear';
       cleanQuestion = '';
     } else if (lowerQuestion === '/github') {
       searchMode = 'github';
+      cleanQuestion = '';
+    } else if (lowerQuestion === "/jira") {
+      searchMode = 'jira';
       cleanQuestion = '';
     }
 
@@ -212,6 +232,8 @@ export class LangGraphAgent {
       return 'github_only';
     } else if (searchMode === 'linear') {
       return 'linear_only';
+    } else if (searchMode === 'jira') {
+      return 'jira_only';
     } else {
       return 'both';
     }
@@ -338,7 +360,7 @@ export class LangGraphAgent {
    */
   private async gatherLinearContext(state: AgentState): Promise<Partial<AgentState>> {
     console.log('📋 [LangGraph] Gathering Linear context...');
-    
+
     if (!this.linearService) {
       return {
         step: 'linear_context_gathered',
@@ -420,11 +442,122 @@ export class LangGraphAgent {
   }
 
   /**
+ * Gather Jira context
+ */
+  private async gatherJiraContext(state: AgentState): Promise<Partial<AgentState>> {
+    console.log('📋 [LangGraph] Gathering Jira context...');
+
+    if (!this.jiraService) {
+      return {
+        step: 'jira_context_gathered',
+        toolsUsed: ['gatherJiraContext'],
+      };
+    }
+
+    const context: any = { ...state.context };
+    const intent = state.intent!;
+    const action = intent.action;
+
+    try {
+      switch (action) {
+        case 'jira_issues':
+          // Get all recent Jira issues
+          context.jiraIssues = await this.jiraService.getIssues(20);
+          break;
+
+        case 'jira_my_issues':
+          // Get issues assigned to current user
+          context.jiraIssues = await this.jiraService.getMyIssues(10);
+          break;
+
+        case 'jira_projects':
+          // Get all Jira projects
+          context.jiraProjects = await this.jiraService.getProjects();
+          break;
+
+        case 'jira_search':
+          // Search Jira issues by text
+          if (intent.parameters.jiraSearchTerm) {
+            context.jiraIssues = await this.jiraService.searchIssuesByText(
+              intent.parameters.jiraSearchTerm,
+              20
+            );
+            context.jiraSearchTerm = intent.parameters.jiraSearchTerm;
+          }
+          break;
+
+        case 'jira_status':
+          // Get issues by status
+          if (intent.parameters.jiraStatus) {
+            context.jiraIssues = await this.jiraService.getIssuesByStatus(
+              intent.parameters.jiraStatus,
+              20
+            );
+            context.jiraStatus = intent.parameters.jiraStatus;
+          }
+          break;
+
+        case 'search':
+          // For general searches, also search Jira
+          if (state.question) {
+            context.jiraIssues = await this.jiraService.searchIssuesByText(
+              state.question,
+              20
+            );
+          }
+          break;
+
+        case 'general':
+          // For general questions, try to fetch recent issues
+          if (state.question.toLowerCase().includes('issue') ||
+            state.question.toLowerCase().includes('ticket') ||
+            state.question.toLowerCase().includes('jira')) {
+            context.jiraIssues = await this.jiraService.getIssues(15);
+          }
+          break;
+
+        case 'issues':
+          // For general issues query, also get Jira issues
+          context.jiraIssues = await this.jiraService.getMyIssues(10);
+          break;
+
+        default:
+          // Check if question mentions a specific issue key (e.g., PROJ-123)
+          const issueKeyMatch = state.question.match(/([A-Z]+-\d+)/);
+          if (issueKeyMatch) {
+            console.log(`🔍 Fetching specific Jira issue: ${issueKeyMatch[0]}`);
+            const issue = await this.jiraService.getIssueDetails(issueKeyMatch[0]);
+            if (issue) {
+              context.jiraIssues = [issue];
+            }
+          } else {
+            // Default: get recent issues
+            context.jiraIssues = await this.jiraService.getIssues(15);
+          }
+          break;
+      }
+
+      return {
+        context,
+        step: 'jira_context_gathered',
+        toolsUsed: ['gatherJiraContext'],
+      };
+    } catch (error: any) {
+      console.error('❌ Error gathering Jira context:', error);
+      return {
+        error: error.message,
+        step: 'error',
+        toolsUsed: ['gatherJiraContext'],
+      };
+    }
+  }
+
+  /**
    * Handle Linear mutations
    */
   private async handleLinearMutation(state: AgentState): Promise<Partial<AgentState>> {
     console.log('✏️  [LangGraph] Handling Linear mutation...');
-    
+
     if (!this.linearService) {
       return {
         response: '❌ Linear service is not configured.',
@@ -573,7 +706,7 @@ export class LangGraphAgent {
    */
   private async generateResponse(state: AgentState): Promise<Partial<AgentState>> {
     console.log('💬 [LangGraph] Generating response...');
-    
+
     try {
       if (!state.intent) {
         return {

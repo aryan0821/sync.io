@@ -1,5 +1,6 @@
 import { GitHubService } from '../services/github';
 import { LinearService } from '../services/linear';
+import { JiraService } from '../services/jira';
 import { LLMService, LLMIntent } from '../services/llm';
 import { LangGraphAgent } from '../agents/langgraph-agent';
 
@@ -7,20 +8,22 @@ export class QuestionHandler {
   private githubService: GitHubService;
   private linearService: LinearService | null;
   private llmService: LLMService;
+  private jiraService: JiraService | null;
   private agent: LangGraphAgent;
 
-  constructor(githubService: GitHubService, llmService: LLMService, linearService?: LinearService) {
+  constructor(githubService: GitHubService, llmService: LLMService, linearService?: LinearService, jiraService?: JiraService) {
     this.githubService = githubService;
     this.llmService = llmService;
     this.linearService = linearService || null;
-    
+    this.jiraService = jiraService || null;
+
     // Initialize LangGraph agent
-    this.agent = new LangGraphAgent(githubService, linearService || null, llmService);
+    this.agent = new LangGraphAgent(githubService, linearService || null, llmService, jiraService || null);
   }
 
   async handleQuestion(question: string): Promise<string> {
     let lowerQuestion = question.toLowerCase().trim();
-    
+
     // Handle simple greetings with help
     if (lowerQuestion === 'hi' || lowerQuestion === 'hello' || lowerQuestion === 'hey') {
       return this.getHelpMessage();
@@ -196,7 +199,7 @@ export class QuestionHandler {
 
     // Sanitize file path
     const sanitizedPath = filePath.trim();
-    
+
     // Basic validation - no path traversal attempts
     if (sanitizedPath.includes('..') || sanitizedPath.startsWith('/')) {
       console.warn('⚠️  Invalid file path detected:', sanitizedPath);
@@ -230,7 +233,7 @@ export class QuestionHandler {
 
     // Sanitize search term
     const sanitizedTerm = searchTerm.trim();
-    
+
     // Limit search term length
     if (sanitizedTerm.length > 100) {
       console.warn('⚠️  Search term too long, truncating');
@@ -282,7 +285,7 @@ export class QuestionHandler {
    */
   private async safeListDirectory(directoryPath: string | undefined, context: any): Promise<void> {
     const path = directoryPath?.trim() || '';
-    
+
     // Basic validation
     if (path.includes('..')) {
       console.warn('⚠️  Invalid directory path detected:', path);
@@ -411,7 +414,7 @@ export class QuestionHandler {
       console.log('🔍 Searching Linear issues for:', searchTerm);
       // Search through issues by title/description
       const allIssues = await this.linearService.getIssues(undefined, 50);
-      const filtered = allIssues.filter(issue => 
+      const filtered = allIssues.filter(issue =>
         issue.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (issue.description && issue.description.toLowerCase().includes(searchTerm.toLowerCase()))
       );
@@ -461,7 +464,7 @@ export class QuestionHandler {
     }
 
     const sanitizedPath = filePath.trim();
-    
+
     if (sanitizedPath.includes('..') || sanitizedPath.startsWith('/')) {
       console.warn('⚠️  Invalid file path detected:', sanitizedPath);
       return;
@@ -492,7 +495,7 @@ export class QuestionHandler {
     }
 
     const sanitizedPath = filePath.trim();
-    
+
     if (sanitizedPath.includes('..') || sanitizedPath.startsWith('/')) {
       console.warn('⚠️  Invalid file path detected:', sanitizedPath);
       return;
@@ -518,7 +521,7 @@ export class QuestionHandler {
    */
   private async safeGetDirectoryTree(directoryPath: string | undefined, context: any): Promise<void> {
     const path = (directoryPath || '').trim();
-    
+
     if (path.includes('..') || path.startsWith('/')) {
       console.warn('⚠️  Invalid directory path detected:', path);
       context.directoryTree = [];
@@ -569,7 +572,7 @@ export class QuestionHandler {
     if (fileMatch && fileMatch[1]) {
       await this.safeGetFile(fileMatch[1], context);
     }
-    
+
     // If no file found, try searching for keywords
     if (!context.fileContents) {
       const searchTerms = question.match(/\b(\w{4,})\b/g)?.slice(0, 3);
@@ -940,38 +943,38 @@ export class QuestionHandler {
 
   private getHelpMessage(): string {
     let help = `🤖 *I'm a GitHub & Linear bot! Here's what I can help you with:*\n\n`;
-    
+
     if (this.linearService) {
       help += `✅ *Linear integration is active*\n\n`;
     } else {
       help += `ℹ️  *Linear integration available* (set LINEAR_API_TOKEN to enable)\n\n`;
     }
-    
+
     help += `📦 *GitHub - Repository Info*\n`;
     help += `• "What is this repo about?" - Get repository information\n`;
     help += `• "Show me the repo stats" - See stars, forks, language, etc.\n\n`;
-    
+
     help += `📄 *GitHub - Files*\n`;
     help += `• "Show me package.json" - Display file contents\n`;
     help += `• "Read src/index.ts" - View any file\n\n`;
-    
+
     help += `🔍 *GitHub - Search*\n`;
     help += `• "Search for authentication" - Find code in the repo\n`;
     help += `• "Where is the login function?" - Locate specific code\n\n`;
-    
+
     help += `📝 *GitHub - Commits & Issues*\n`;
     help += `• "Recent commits" - Show latest commits\n`;
     help += `• "Open issues" - List open issues\n\n`;
-    
+
     help += `📁 *GitHub - Directories*\n`;
     help += `• "List files in src" - Show directory contents\n`;
     help += `• "Show directory tree" - Get full directory structure\n\n`;
-    
+
     help += `🔍 *GitHub - Code Browsing*\n`;
     help += `• "What's the structure of src/index.ts?" - Analyze code structure\n`;
     help += `• "Show me lines 10-50 of src/index.ts" - Browse specific lines\n`;
     help += `• "Find files that use GitHubService" - Find where code is used\n\n`;
-    
+
     if (this.linearService) {
       help += `📋 *Linear - Issues*\n`;
       help += `• "Show me my Linear issues" - List your assigned issues\n`;
@@ -979,30 +982,30 @@ export class QuestionHandler {
       help += `• "Update issue FE-123 to In Progress" - Update issue status\n`;
       help += `• "Assign issue BE-456 to John" - Assign issue to user\n`;
       help += `• "Add comment to issue UI-789: 'Needs review'" - Add comment\n\n`;
-      
+
       help += `👥 *Linear - Teams*\n`;
       help += `• "Show Linear teams" - List all teams\n\n`;
-      
+
       help += `📊 *Linear - Projects*\n`;
       help += `• "Show Linear projects" - List all projects\n\n`;
-      
+
       help += `🔍 *Linear - Search & Filter*\n`;
       help += `• "Search Linear issues for 'bug'" - Search issues\n`;
       help += `• "Show issues in In Progress state" - Filter by state\n\n`;
     }
-    
+
     help += `💬 *General Questions*\n`;
     help += `• "How does authentication work?" - Ask about your codebase\n`;
     help += `• "Explain the main function" - Get code explanations\n\n`;
-    
+
     help += `🔍 *Search Commands*\n`;
     help += `• "Search for bug" - Searches both GitHub and Linear by default\n`;
     help += `• "/github search for bug" - Search only GitHub\n`;
     help += `• "/linear search for bug" - Search only Linear\n\n`;
-    
+
     help += `*Just ask me anything about your repository or Linear!*\n`;
     help += `*Tip: Use /github or /linear prefix to search specific sources.*`;
-    
+
     return help;
   }
 }

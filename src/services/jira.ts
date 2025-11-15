@@ -19,49 +19,125 @@ export class JiraService {
   async getAllIssueIds() {
     let allIssueIds: any[] = [];
     let startAt = 0;
-    const maxResults = 100; // Adjust as needed, max is usually 1000
+    const maxResults = 100;
 
     try {
       while (true) {
-
-        // Access all Jira issues via issues = response.issues
         const response = await axios.get(`${this.JIRA_BASE_URL}/rest/api/3/search`, {
-          auth: { username: this.JIRA_USERNAME, password: this.JIRA_API_TOKEN, },
+          auth: { username: this.JIRA_USERNAME, password: this.JIRA_API_TOKEN },
           params: {
-            jql: 'ORDER BY created ASC', fields: 'id',
-            startAt: startAt, maxResults: maxResults,
+            jql: 'ORDER BY created DESC',
+            fields: 'id',
+            startAt: startAt,
+            maxResults: maxResults,
           },
         });
         const issues = response.data.issues;
 
+        if (issues.length === 0) break;
 
-        if (issues.length === 0) {
-          break; // No more issues to fetch
-        }
-
-        // Concat all Jira issues together into one array called currentIssueIds
         const currentIssueIds = issues.map((issue: any) => issue.id);
         allIssueIds = allIssueIds.concat(currentIssueIds);
 
         startAt += issues.length;
 
-        if (startAt >= response.data.total) {
-          break; // All issues fetched
-        }
-
-        // Endwhile
+        if (startAt >= response.data.total) break;
       }
-      return allIssueIds;
-    }
 
-    catch (error: any) {
+      console.log(`✅ Successfully fetched ${allIssueIds.length} Jira issue IDs`);
+      return allIssueIds;
+    } catch (error: any) {
       console.error('Error fetching Jira issue IDs:', error.message);
       if (error.response) {
         console.error('Jira API error response:', error.response.data);
       }
       return [];
     }
+  }
 
+  async getIssueDetails(issueIdOrKey: string) {
+    try {
+      const response = await axios.get(
+        `${this.JIRA_BASE_URL}/rest/api/3/issue/${issueIdOrKey}`,
+        {
+          auth: {
+            username: this.JIRA_USERNAME,
+            password: this.JIRA_API_TOKEN
+          }
+        }
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error(`Error fetching Jira issue ${issueIdOrKey}:`, error.message);
+      return null;
+    }
+  }
+
+  async getIssues(maxResults: number = 20) {
+    try {
+      const response = await axios.get(`${this.JIRA_BASE_URL}/rest/api/3/search`, {
+        auth: { username: this.JIRA_USERNAME, password: this.JIRA_API_TOKEN },
+        params: {
+          jql: 'ORDER BY updated DESC',
+          fields: 'summary,status,assignee,priority,created,updated,description,issuetype',
+          maxResults: maxResults,
+        },
+      });
+
+      console.log(`✅ Fetched ${response.data.issues.length} Jira issues with details`);
+      return response.data.issues;
+    } catch (error: any) {
+      console.error('Error fetching Jira issues:', error.message);
+      return [];
+    }
+  }
+
+  async searchIssues(jql: string, maxResults: number = 20) {
+    try {
+      const response = await axios.get(`${this.JIRA_BASE_URL}/rest/api/3/search`, {
+        auth: { username: this.JIRA_USERNAME, password: this.JIRA_API_TOKEN },
+        params: {
+          jql: jql,
+          fields: 'summary,status,assignee,priority,created,updated,description,issuetype',
+          maxResults: maxResults,
+        },
+      });
+
+      console.log(`✅ Found ${response.data.issues.length} Jira issues for JQL: ${jql}`);
+      return response.data.issues;
+    } catch (error: any) {
+      console.error('Error searching Jira issues:', error.message);
+      return [];
+    }
+  }
+
+  async searchIssuesByText(searchTerm: string, maxResults: number = 20) {
+    const jql = `text ~ "${searchTerm}" ORDER BY updated DESC`;
+    return this.searchIssues(jql, maxResults);
+  }
+
+  async getIssuesByStatus(status: string, maxResults: number = 20) {
+    const jql = `status = "${status}" ORDER BY updated DESC`;
+    return this.searchIssues(jql, maxResults);
+  }
+
+  async getMyIssues(maxResults: number = 20) {
+    const jql = `assignee = currentUser() ORDER BY updated DESC`;
+    return this.searchIssues(jql, maxResults);
+  }
+
+  async getProjects() {
+    try {
+      const response = await axios.get(`${this.JIRA_BASE_URL}/rest/api/3/project`, {
+        auth: { username: this.JIRA_USERNAME, password: this.JIRA_API_TOKEN }
+      });
+
+      console.log(`✅ Fetched ${response.data.length} Jira projects`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching Jira projects:', error.message);
+      return [];
+    }
   }
 
 }

@@ -151,6 +151,46 @@ app.event('app_mention', async ({ event, say }: any) => {
   }
 });
 
+// Handle /jira slash command
+app.command('/jira', async ({ command, ack, respond, client }: any) => {
+  // Acknowledge immediately to prevent timeout
+  try {
+    await ack();
+    console.log('✅ /jira command acknowledged');
+  } catch (ackError: any) {
+    console.error('❌ Failed to acknowledge /jira command:', ackError);
+    return;
+  }
+
+  console.log('🔧 /jira command received:', {
+    text: command.text,
+    user: command.user_id,
+    channel: command.channel_id
+  });
+
+  try {
+    // If no text provided, show help
+    if (!command.text || command.text.trim().length === 0) {
+      await respond('📋 *Jira Search*\n\nUsage: `/jira <your question>`\n\nExamples:\n• `/jira show my issues`\n• `/jira search for bug`\n• `/jira list all issues`');
+      return;
+    }
+
+    // Process the question with Jira-only mode
+    const question = `/jira ${command.text}`;
+    const response = await questionHandler.handleQuestion(question);
+    await respond(response);
+    console.log('✅ /jira command processed');
+  } catch (error: any) {
+    console.error('❌ Error processing /jira command:', error);
+    console.error('Error stack:', error?.stack);
+    try {
+      await respond(`Sorry, I encountered an error processing your Jira request: ${error?.message || 'Unknown error'}`);
+    } catch (respondError: any) {
+      console.error('❌ Failed to send error response:', respondError);
+    }
+  }
+});
+
 // Handle /github slash command
 app.command('/github', async ({ command, ack, respond, client }: any) => {
   // Acknowledge immediately to prevent timeout

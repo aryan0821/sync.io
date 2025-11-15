@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 
 export interface LLMIntent {
-  action: 'info' | 'file' | 'search' | 'commits' | 'issues' | 'list' | 'team' | 'collaborators' | 'contributors' | 'linear_issues' | 'linear_create' | 'linear_update' | 'linear_assign' | 'linear_comment' | 'linear_teams' | 'linear_projects' | 'linear_search' | 'linear_state' | 'browse' | 'structure' | 'tree' | 'find_usage' | 'general';
+  action: 'info' | 'file' | 'search' | 'commits' | 'issues' | 'list' | 'team' | 'collaborators' | 'contributors' | 'linear_issues' | 'linear_create' | 'linear_update' | 'linear_assign' | 'linear_comment' | 'linear_teams' | 'linear_projects' | 'linear_search' | 'linear_state' | 'browse' | 'structure' | 'tree' | 'find_usage' | 'general' | 'jira_issues' | 'jira_my_issues' | 'jira_projects' | 'jira_search' | 'jira_status';
   parameters: {
     filePath?: string;
     searchTerm?: string;
@@ -20,6 +20,8 @@ export interface LLMIntent {
     startLine?: number;
     endLine?: number;
     moduleName?: string;
+    jiraSearchTerm?: string;
+    jiraStatus?: string
   };
   confidence: number;
 }
@@ -155,7 +157,7 @@ Only return valid JSON, no other text.`;
       if (context.fileContents && context.filePath) {
         contextText += `# File: ${context.filePath}\n`;
         // Include full file if small, or first 3000 chars if large
-        const filePreview = context.fileContents.length > 3000 
+        const filePreview = context.fileContents.length > 3000
           ? context.fileContents.substring(0, 3000) + '\n... (file continues)'
           : context.fileContents;
         contextText += `${filePreview}\n\n`;
@@ -335,7 +337,7 @@ Only return valid JSON, no other text.`;
 
       // Build system prompt based on intent
       let systemPrompt = 'You are a helpful GitHub repository assistant. Answer questions about the repository based on the provided context. ';
-      
+
       switch (intent.action) {
         case 'info':
           systemPrompt += 'Provide a clear, informative summary of the repository.';
@@ -634,24 +636,24 @@ Only return valid JSON, no other text.`;
 
   private fallbackUnderstanding(question: string): LLMIntent {
     const lowerQuestion = question.toLowerCase();
-    
+
     // Check for code browsing keywords
     if (lowerQuestion.includes('structure') || lowerQuestion.includes('analyze') || lowerQuestion.includes('what exports') || lowerQuestion.includes('what imports')) {
       return { action: 'structure', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('tree') || lowerQuestion.includes('directory structure') || lowerQuestion.includes('file structure')) {
       return { action: 'tree', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('find') && (lowerQuestion.includes('usage') || lowerQuestion.includes('uses') || lowerQuestion.includes('import'))) {
       return { action: 'find_usage', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('line') && (lowerQuestion.includes('show') || lowerQuestion.includes('read') || lowerQuestion.match(/\d+-\d+/))) {
       return { action: 'browse', parameters: {}, confidence: 0.7 };
     }
-    
+
     // Check for Linear keywords
     if (lowerQuestion.includes('linear') && lowerQuestion.includes('issue')) {
       if (lowerQuestion.includes('create') || lowerQuestion.includes('new')) {
@@ -668,29 +670,29 @@ Only return valid JSON, no other text.`;
       }
       return { action: 'linear_issues', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('linear') && lowerQuestion.includes('team')) {
       return { action: 'linear_teams', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('linear') && lowerQuestion.includes('project')) {
       return { action: 'linear_projects', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('linear') && (lowerQuestion.includes('search') || lowerQuestion.includes('find'))) {
       return { action: 'linear_search', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('linear') && (lowerQuestion.includes('state') || lowerQuestion.includes('status'))) {
       return { action: 'linear_state', parameters: {}, confidence: 0.7 };
     }
-    
+
     // Check for team/collaborator related keywords
-    if (lowerQuestion.includes('team') || lowerQuestion.includes('collaborator') || 
-        lowerQuestion.includes('who works') || lowerQuestion.includes('team members')) {
+    if (lowerQuestion.includes('team') || lowerQuestion.includes('collaborator') ||
+      lowerQuestion.includes('who works') || lowerQuestion.includes('team members')) {
       return { action: 'team', parameters: {}, confidence: 0.7 };
     }
-    
+
     if (lowerQuestion.includes('contributor') || lowerQuestion.includes('who contributed')) {
       return { action: 'contributors', parameters: {}, confidence: 0.7 };
     }
