@@ -1,6 +1,7 @@
 import { App } from '@slack/bolt';
 import * as dotenv from 'dotenv';
 import { GitHubService } from './services/github';
+import { LinearService } from './services/linear';
 import { JiraService } from './services/jira';
 import { LLMService } from './services/llm';
 import { QuestionHandler } from './handlers/questionHandler';
@@ -8,6 +9,17 @@ import { setupWebhookServer } from './webhook';
 
 // Load environment variables
 dotenv.config();
+
+// Verify environment variables are loaded
+if (!process.env.GITHUB_TOKEN) {
+  console.error('⚠️  WARNING: GITHUB_TOKEN not found in environment');
+}
+if (!process.env.GITHUB_OWNER) {
+  console.error('⚠️  WARNING: GITHUB_OWNER not found in environment');
+}
+if (!process.env.GITHUB_REPO) {
+  console.error('⚠️  WARNING: GITHUB_REPO not found in environment');
+}
 
 // Initialize Slack app
 const app = new App({
@@ -18,11 +30,31 @@ const app = new App({
 });
 
 // Initialize services
-const githubService = new GitHubService(
-  process.env.GITHUB_TOKEN || '',
-  process.env.GITHUB_OWNER || '',
-  process.env.GITHUB_REPO || ''
-);
+const githubToken = process.env.GITHUB_TOKEN || '';
+const githubOwner = process.env.GITHUB_OWNER || '';
+const githubRepo = process.env.GITHUB_REPO || '';
+
+console.log('🔧 GitHub Config:', {
+  owner: githubOwner,
+  repo: githubRepo,
+  tokenPresent: !!githubToken,
+  tokenPrefix: githubToken.substring(0, 10) + '...'
+});
+
+const githubService = new GitHubService(githubToken, githubOwner, githubRepo);
+
+// Initialize Linear service if token is provided
+let linearService: LinearService | undefined;
+if (process.env.LINEAR_API_TOKEN) {
+  try {
+    linearService = new LinearService(process.env.LINEAR_API_TOKEN);
+    console.log('✅ Linear service initialized');
+  } catch (error) {
+    console.error('⚠️  Failed to initialize Linear service:', error);
+  }
+} else {
+  console.log('ℹ️  Linear service not configured (LINEAR_API_TOKEN not set)');
+}
 
 // Initialize Jira service
 const jiraService = new JiraService(
@@ -32,7 +64,7 @@ const jiraService = new JiraService(
 );
 
 const llmService = new LLMService(process.env.OPENAI_API_KEY);
-const questionHandler = new QuestionHandler(githubService, llmService);
+const questionHandler = new QuestionHandler(githubService, llmService, linearService);
 
 // Listen for ALL messages (more permissive)
 app.message(async ({ message, say }: any) => {
@@ -119,6 +151,86 @@ app.event('app_mention', async ({ event, say }: any) => {
   }
 });
 
+// Handle /github slash command
+app.command('/github', async ({ command, ack, respond, client }: any) => {
+  // Acknowledge immediately to prevent timeout
+  try {
+    await ack();
+    console.log('✅ /github command acknowledged');
+  } catch (ackError: any) {
+    console.error('❌ Failed to acknowledge /github command:', ackError);
+    return;
+  }
+
+  console.log('🔧 /github command received:', {
+    text: command.text,
+    user: command.user_id,
+    channel: command.channel_id
+  });
+
+  try {
+    // If no text provided, show help
+    if (!command.text || command.text.trim().length === 0) {
+      await respond('🔍 *GitHub Search*\n\nUsage: `/github <your question>`\n\nExamples:\n• `/github search for authentication`\n• `/github show recent commits`\n• `/github what is this repo about?`');
+      return;
+    }
+
+    // Process the question with GitHub-only mode
+    const question = `/github ${command.text}`;
+    const response = await questionHandler.handleQuestion(question);
+    await respond(response);
+    console.log('✅ /github command processed');
+  } catch (error: any) {
+    console.error('❌ Error processing /github command:', error);
+    console.error('Error stack:', error?.stack);
+    try {
+      await respond(`Sorry, I encountered an error processing your GitHub request: ${error?.message || 'Unknown error'}`);
+    } catch (respondError: any) {
+      console.error('❌ Failed to send error response:', respondError);
+    }
+  }
+});
+
+// Handle /linear slash command
+app.command('/linear', async ({ command, ack, respond, client }: any) => {
+  // Acknowledge immediately to prevent timeout
+  try {
+    await ack();
+    console.log('✅ /linear command acknowledged');
+  } catch (ackError: any) {
+    console.error('❌ Failed to acknowledge /linear command:', ackError);
+    return;
+  }
+
+  console.log('🔧 /linear command received:', {
+    text: command.text,
+    user: command.user_id,
+    channel: command.channel_id
+  });
+
+  try {
+    // If no text provided, show help
+    if (!command.text || command.text.trim().length === 0) {
+      await respond('📋 *Linear Search*\n\nUsage: `/linear <your question>`\n\nExamples:\n• `/linear show my issues`\n• `/linear search for bug`\n• `/linear show teams`');
+      return;
+    }
+
+    // Process the question with Linear-only mode
+    const question = `/linear ${command.text}`;
+    const response = await questionHandler.handleQuestion(question);
+    await respond(response);
+    console.log('✅ /linear command processed');
+  } catch (error: any) {
+    console.error('❌ Error processing /linear command:', error);
+    console.error('Error stack:', error?.stack);
+    try {
+      await respond(`Sorry, I encountered an error processing your Linear request: ${error?.message || 'Unknown error'}`);
+    } catch (respondError: any) {
+      console.error('❌ Failed to send error response:', respondError);
+    }
+  }
+});
+
 // Also listen for message events directly
 app.event('message', async ({ event, say }: any) => {
   console.log('📢 Message event received:', {
@@ -149,8 +261,12 @@ app.event('message', async ({ event, say }: any) => {
       console.log('📋 Listening for:');
       console.log('   - Direct messages (DMs)');
       console.log('   - App mentions');
-      console.log('   - Messages with "github" or "repo"\n');
-      console.log('💡 Send a test message in Slack and watch for "📨 Message received" above\n');
+      console.log('   - Messages with "github" or "repo"');
+      console.log('   - Slash commands: /github and /linear\n');
+      console.log('💡 Try:');
+      console.log('   - Send a DM to the bot');
+      console.log('   - Use /github search for bug');
+      console.log('   - Use /linear show my issues\n');
 
       // Setup GitHub webhook server if configured
       const slackUserId = process.env.SLACK_USER_ID;
