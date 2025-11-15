@@ -1,0 +1,107 @@
+{
+  "name": "Document and Knowledge Base Queries",
+  "description": "Mapping of document-related queries to their sources and handling instructions",
+  "queries": [
+    {
+      "pattern": "Q4 product roadmap",
+      "keywords": ["Q4", "product roadmap", "roadmap", "quarter 4"],
+      "source": "company_documents",
+      "document_type": "roadmap",
+      "location": "Company Drive > Product > Roadmaps > Q4_2025_Roadmap.pdf",
+      "summary": "The Q4 product roadmap outlines key features and initiatives planned for the final quarter of 2025, including major product launches, infrastructure improvements, and customer-facing enhancements.",
+      "key_points": [
+        "Major product launch scheduled for late Q4",
+        "Infrastructure scaling to support 10x growth",
+        "New customer onboarding flow",
+        "Enhanced analytics dashboard",
+        "API v2 release"
+      ],
+      "status": "active",
+      "last_updated": "2025-11-15"
+    },
+    {
+      "pattern": "company handbook PTO",
+      "keywords": ["handbook", "PTO", "paid time off", "vacation", "time off policy"],
+      "source": "company_documents",
+      "document_type": "handbook",
+      "location": "Company Drive > HR > Employee_Handbook.pdf",
+      "summary": "The company handbook outlines the PTO (Paid Time Off) policy, including accrual rates, usage guidelines, and approval processes.",
+      "key_points": [
+        "PTO accrues at 1.25 days per month for full-time employees",
+        "Maximum accrual cap of 20 days",
+        "PTO requests require manager approval with 2 weeks notice",
+        "Unused PTO can be carried over up to 5 days to the next year",
+        "PTO includes vacation, sick leave, and personal days"
+      ],
+      "status": "active",
+      "last_updated": "2025-10-01"
+    },
+    {
+      "pattern": "documents about",
+      "keywords": ["documents", "about", "show me", "find"],
+      "source": "knowledge_base",
+      "document_type": "general",
+      "search_instructions": "When users ask for documents about a topic, search the knowledge base using the topic keywords. Available sources include: Company Drive, Confluence, Notion, Google Drive, and internal wikis.",
+      "search_sources": [
+        "Company Drive (shared network drive)",
+        "Confluence (team documentation)",
+        "Notion (project documentation)",
+        "Google Drive (shared documents)",
+        "Internal Wiki (company knowledge base)"
+      ],
+      "search_method": "keyword_matching",
+      "status": "active"
+    }
+  ],
+  "document_sources": {
+    "company_documents": {
+      "description": "Official company documents including handbooks, policies, and roadmaps",
+      "location": "Company Drive",
+      "access_level": "all_employees",
+      "formats": ["PDF", "Google Docs", "Confluence pages"]
+    },
+    "knowledge_base": {
+      "description": "Searchable knowledge base containing team documentation, project notes, and company information",
+      "location": "Multiple sources (Confluence, Notion, Google Drive, Wiki)",
+      "access_level": "varies_by_document",
+      "formats": ["Markdown", "PDF", "Google Docs", "Confluence", "Notion pages"]
+    }
+  },
+  "query_handling": {
+    "roadmap_queries": {
+      "pattern": "roadmap|Q[1-4]|quarter",
+      "action": "retrieve_document",
+      "source": "company_documents",
+      "response_format": "summary_with_key_points"
+    },
+    "handbook_queries": {
+      "pattern": "handbook|policy|PTO|vacation|benefits",
+      "action": "retrieve_document",
+      "source": "company_documents",
+      "response_format": "detailed_policy_information"
+    },
+    "general_document_queries": {
+      "pattern": "documents about|show me|find.*about",
+      "action": "search_knowledge_base",
+      "source": "knowledge_base",
+      "response_format": "list_of_documents_with_summaries"
+    }
+  },
+  "integration_notes": {
+    "current_status": "JSON structure defined - ready for implementation",
+    "next_steps": [
+      "Implement DocumentService to search Confluence/Notion/Google Drive",
+      "Add document query intent to LLMService",
+      "Create document retrieval handlers",
+      "Add document context to agent workflow"
+    ],
+    "potential_sources": [
+      "Confluence API",
+      "Notion API",
+      "Google Drive API",
+      "File system (for local documents)",
+      "Custom knowledge base API"
+    ]
+  }
+}
+

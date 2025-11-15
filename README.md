@@ -41,6 +41,13 @@ A powerful, agentic Slack bot that connects to GitHub and Linear to answer quest
   - `/linear <question>` - Search Linear only
 - **GitHub Webhooks**: Receive notifications for mentions and assignments (optional)
 
+### Email Integration
+- **Email Receiving**: Automatically monitor and forward relevant emails to Slack
+- **AI-Powered Filtering**: Uses Claude AI to analyze email relevance and importance
+- **Email Sending**: Send emails directly from Slack using natural language commands
+- **Scheduled Checks**: Automatically checks for new emails on a configurable schedule
+- **Smart Forwarding**: Only forwards emails that meet relevance and confidence thresholds
+
 ## 📋 Prerequisites
 
 - **Node.js**: Version 18 or higher
@@ -49,6 +56,8 @@ A powerful, agentic Slack bot that connects to GitHub and Linear to answer quest
 - **GitHub Account**: With access to the repository you want to query
 - **OpenAI API Key**: For LLM-powered question understanding (recommended)
 - **Linear API Token**: (Optional) For Linear integration
+- **Microsoft Azure AD App**: (Optional) For Outlook/Email integration
+- **Claude API Key**: (Optional) For email relevance analysis
 
 ## 🛠️ Installation
 
@@ -114,6 +123,40 @@ npm install
 3. Give it a name (e.g., "Slack Sync Bot")
 4. Copy the token (starts with `lin_api_`)
 
+### 6. Set Up Email Integration (Optional)
+
+#### For Outlook/Microsoft 365:
+
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Navigate to **Azure Active Directory** → **App registrations**
+3. Click **"New registration"**
+4. Name your app (e.g., "Slack Sync Email Bot")
+5. Set redirect URI: `http://localhost:3000/auth/callback` (or your production URL)
+6. Click **"Register"**
+7. Copy the following values:
+   - **Application (client) ID** → This is your `OUTLOOK_CLIENT_ID`
+   - **Directory (tenant) ID** → This is your `OUTLOOK_TENANT_ID`
+8. Navigate to **"Certificates & secrets"**
+9. Click **"New client secret"**
+10. Add description and set expiration
+11. Copy the secret value → This is your `OUTLOOK_CLIENT_SECRET`
+12. Navigate to **"API permissions"**
+13. Click **"Add a permission"** → **Microsoft Graph** → **Delegated permissions**
+14. Add the following permissions:
+    - `Mail.Read` - Read user mail
+    - `Mail.Send` - Send mail as user
+    - `User.Read` - Sign in and read user profile
+15. Click **"Grant admin consent"** (if you have admin rights)
+16. Your email address → This is your `OUTLOOK_USER_EMAIL`
+
+#### For Claude AI (Email Analysis):
+
+1. Go to [console.anthropic.com](https://console.anthropic.com)
+2. Sign up or log in
+3. Navigate to **API Keys**
+4. Click **"Create Key"**
+5. Copy the key (starts with `sk-ant-`)
+
 ### 6. Configure Environment Variables
 
 1. Create a `.env` file in the project root:
@@ -146,6 +189,16 @@ LINEAR_API_TOKEN=lin_api_your_linear_token_here
 SLACK_USER_ID=U1234567890  # Your Slack user ID for webhook notifications
 GITHUB_USERNAME=your-github-username  # Your GitHub username for webhook matching
 WEBHOOK_PORT=3000  # Port for webhook server (default: 3000)
+
+# Email Integration (Optional - Outlook/Microsoft 365)
+OUTLOOK_CLIENT_ID=your-azure-app-client-id
+OUTLOOK_CLIENT_SECRET=your-azure-app-client-secret
+OUTLOOK_TENANT_ID=your-azure-tenant-id
+OUTLOOK_USER_EMAIL=your-email@example.com
+SLACK_CHANNEL=C1234567890  # Slack channel ID to post emails to
+EMAIL_CHECK_INTERVAL=*/5 * * * *  # Cron expression (default: every 5 minutes)
+CONFIDENCE_THRESHOLD=0.6  # Email relevance confidence threshold (0.0-1.0)
+CLAUDE_API_KEY=sk-ant-your-claude-api-key  # For email relevance analysis
 ```
 
 ## 🚀 Running the Bot
@@ -267,6 +320,19 @@ By default, the bot searches both GitHub and Linear. You can restrict searches:
 - `"/linear search for bug"` - Search only Linear
 - `"search for bug"` - Search both GitHub and Linear
 
+### Email Queries
+
+#### Receiving Emails
+- `"check emails"` - Manually check for unread emails
+- The bot automatically checks for emails on a schedule (default: every 5 minutes)
+- Relevant emails are automatically forwarded to the configured Slack channel
+- Uses AI to analyze email relevance and only forwards important emails
+
+#### Sending Emails
+- `"send email to user@example.com subject: Your Subject body: Your message"` - Send an email
+- Format: `send email to <email> subject: <subject> body: <message>`
+- Example: `"send email to john@example.com subject: Meeting Tomorrow body: Let's meet at 2pm"`
+
 ## 🏗️ Architecture
 
 ### Project Structure
@@ -279,12 +345,16 @@ slack-sync/
 │   │   ├── langgraph-agent.ts      # LangGraph-based agentic workflow orchestration
 │   │   └── agent.ts                # Legacy agent implementation (deprecated)
 │   ├── handlers/
-│   │   └── questionHandler.ts      # Question processing and routing
+│   │   ├── questionHandler.ts      # Question processing and routing
+│   │   └── emailHandler.ts         # Email receiving and sending logic
 │   ├── services/
 │   │   ├── github.ts               # GitHub API integration (Octokit)
 │   │   ├── linear.ts               # Linear GraphQL API integration
 │   │   ├── llm.ts                  # OpenAI LLM service for intent classification and response generation
-│   │   └── githubWebhook.ts        # GitHub webhook event handling
+│   │   ├── githubWebhook.ts        # GitHub webhook event handling
+│   │   ├── outlook.ts              # Outlook/Microsoft Graph API integration
+│   │   ├── claude.ts               # Claude AI service for email analysis
+│   │   └── emailForwarderGraph.ts  # Email forwarding service
 │   └── webhook.ts                  # Express server for GitHub webhooks
 ├── dist/                           # Compiled JavaScript (generated)
 ├── package.json
@@ -369,6 +439,14 @@ The agent uses LangGraph's `StateGraph` with a shared state object:
 | `SLACK_USER_ID` | No | Your Slack user ID (for webhooks) |
 | `GITHUB_USERNAME` | No | Your GitHub username (for webhooks) |
 | `WEBHOOK_PORT` | No | Port for webhook server (default: 3000) |
+| `OUTLOOK_CLIENT_ID` | No | Azure AD App Client ID (for email) |
+| `OUTLOOK_CLIENT_SECRET` | No | Azure AD App Client Secret (for email) |
+| `OUTLOOK_TENANT_ID` | No | Azure AD Tenant ID (for email) |
+| `OUTLOOK_USER_EMAIL` | No | Your Outlook/Office 365 email address |
+| `SLACK_CHANNEL` | No | Slack channel ID to post emails to |
+| `EMAIL_CHECK_INTERVAL` | No | Cron expression for email checks (default: `*/5 * * * *`) |
+| `CONFIDENCE_THRESHOLD` | No | Email relevance threshold 0.0-1.0 (default: 0.6) |
+| `CLAUDE_API_KEY` | No | Claude API key for email analysis |
 
 ### GitHub Token Permissions
 
@@ -434,6 +512,20 @@ Linear API tokens start with `lin_api_` and can be created at [linear.app/settin
 3. Ensure the token has necessary permissions
 4. Verify you have access to the Linear workspace
 
+### Email Integration Errors
+
+**Symptoms**: Email checking fails or emails not forwarding
+
+**Solutions**:
+1. Verify all Outlook credentials are correct (`OUTLOOK_CLIENT_ID`, `OUTLOOK_CLIENT_SECRET`, `OUTLOOK_TENANT_ID`, `OUTLOOK_USER_EMAIL`)
+2. Check Azure AD app has correct permissions (`Mail.Read`, `Mail.Send`, `User.Read`)
+3. Ensure admin consent is granted for API permissions
+4. Verify `SLACK_CHANNEL` is a valid channel ID (starts with `C` for public or `G` for private)
+5. Check bot has permission to post in the channel (invite bot to channel)
+6. Verify `CLAUDE_API_KEY` is correct if using email analysis
+7. Check `EMAIL_CHECK_INTERVAL` is a valid cron expression
+8. Review terminal logs for detailed error messages
+
 ### TypeScript Compilation Errors
 
 **Symptoms**: `npm run build` fails
@@ -492,6 +584,70 @@ Enable verbose logging by checking terminal output. All services log their opera
 - 🔧 Configuration
 - 📨 Messages
 - 🔍 Analysis
+
+## 📧 Email Features
+
+### How Email Receiving Works
+
+1. **Automatic Monitoring**: The bot checks for unread emails on a schedule (default: every 5 minutes)
+2. **AI Analysis**: Each email is analyzed by Claude AI to determine relevance
+3. **Smart Filtering**: Only emails above the confidence threshold are forwarded
+4. **Slack Notifications**: Relevant emails are posted to the configured Slack channel with:
+   - Subject line
+   - Sender information
+   - Email body preview
+   - Relevance score and reasoning
+
+### Email Relevance Analysis
+
+The bot uses Claude AI to analyze emails and determine if they should be forwarded to Slack. Factors considered:
+- Email subject and content
+- Sender information
+- Urgency indicators
+- Project/work-related keywords
+- Customizable confidence threshold
+
+### Manual Email Check
+
+You can manually trigger an email check:
+```
+check emails
+```
+
+This will:
+- Check for unread emails
+- Analyze their relevance
+- Forward relevant ones to Slack
+- Show a summary of found emails
+
+### Sending Emails
+
+Send emails directly from Slack using natural language:
+
+```
+send email to user@example.com subject: Meeting Tomorrow body: Let's meet at 2pm to discuss the project
+```
+
+**Format**: `send email to <email> subject: <subject> body: <message>`
+
+**Requirements**:
+- Valid Outlook/Microsoft 365 account configured
+- Azure AD app with `Mail.Send` permission
+- Proper authentication
+
+### Email Configuration
+
+**Cron Expression Format** (`EMAIL_CHECK_INTERVAL`):
+- `*/5 * * * *` - Every 5 minutes (default)
+- `*/10 * * * *` - Every 10 minutes
+- `0 * * * *` - Every hour
+- `0 9 * * *` - Daily at 9 AM
+
+**Confidence Threshold** (`CONFIDENCE_THRESHOLD`):
+- Range: 0.0 to 1.0
+- Default: 0.6 (60%)
+- Higher = more selective (only very relevant emails)
+- Lower = less selective (more emails forwarded)
 
 ## 📖 API Reference
 
@@ -558,6 +714,8 @@ MIT
 - [Slack Bolt Framework](https://slack.dev/bolt-js/)
 - [Octokit](https://github.com/octokit/rest.js) - GitHub API client
 - [OpenAI](https://openai.com/) - LLM capabilities
+- [Claude AI](https://www.anthropic.com/) - Email relevance analysis
+- [Microsoft Graph API](https://learn.microsoft.com/en-us/graph/) - Outlook/Email integration
 - [LangGraph](https://github.com/langchain-ai/langgraph) - Agentic workflow orchestration
 - [Linear](https://linear.app/) - Project management platform
 
