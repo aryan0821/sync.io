@@ -649,6 +649,129 @@ send email to user@example.com subject: Meeting Tomorrow body: Let's meet at 2pm
 - Higher = more selective (only very relevant emails)
 - Lower = less selective (more emails forwarded)
 
+## 🛠️ Tech Stack
+
+### Core Technologies
+
+- **TypeScript**: Type-safe, maintainable codebase
+- **Node.js**: Runtime environment
+- **Slack Bolt Framework**: Real-time Slack integration and event handling
+- **LangGraph**: Agentic workflow orchestration with stateful multi-step reasoning
+- **MCP (Model Context Protocol) Tools**: Seamless integration across platforms
+
+### AI & LLM Services
+
+- **OpenAI GPT-4o-mini**: Intent classification and natural language response generation
+- **Claude AI**: Email relevance analysis and intelligent filtering
+
+### API Integrations
+
+- **Octokit**: GitHub REST API client for repository operations
+- **Linear GraphQL API**: Project management and issue tracking
+- **Microsoft Graph API**: Outlook/Email integration (read and send)
+- **Express.js**: Webhook server for GitHub and Linear events
+
+### Data & Storage
+
+- **In-Memory Storage**: Conversation history and context management
+- **JSON Files**: User context and document query mappings
+- **Environment Variables**: Configuration and secrets management
+
+### Development Tools
+
+- **ts-node**: TypeScript execution in development
+- **TypeScript Compiler**: Type checking and compilation
+- **node-cron**: Scheduled tasks (email checking)
+
+### Architecture Patterns
+
+- **Service Layer**: Abstracted API integrations (GitHubService, LinearService, etc.)
+- **Agent Pattern**: LangGraph-based intelligent workflow orchestration
+- **Handler Pattern**: Question processing and routing
+- **Memory Pattern**: Thread-based conversation history
+
+## 🚧 Challenges & Solutions
+
+### Challenge 1: Context Switching Between Sources
+
+**Problem**: Determining when to query GitHub vs Linear vs documents vs user context was complex and error-prone.
+
+**Solution**: Built an intelligent context router that analyzes queries and automatically routes to the appropriate source(s). The router uses keyword detection, intent classification, and hybrid mode for complex queries needing multiple sources.
+
+**Implementation**: `ContextRouter` class in `src/utils/contextRouter.ts` that prioritizes document queries, user context, and then GitHub/Linear based on query patterns.
+
+### Challenge 2: Maintaining Conversation Memory
+
+**Problem**: Keeping context across multiple interactions without losing information or accumulating too much data.
+
+**Solution**: Implemented thread-based memory service with automatic cleanup. Memory is stored per Slack thread, preserving context within conversations while automatically cleaning up old threads.
+
+**Implementation**: `MemoryService` class in `src/services/memoryService.ts` with configurable retention policies and periodic cleanup.
+
+### Challenge 3: Email Relevance Filtering
+
+**Problem**: Forwarding every email to Slack would create spam and noise, but manually filtering is time-consuming.
+
+**Solution**: Integrated Claude AI to analyze email relevance with configurable confidence thresholds. Only emails above the threshold are forwarded, with reasoning provided.
+
+**Implementation**: `ClaudeService` in `src/services/claude.ts` analyzes email subject, sender, and content preview to determine relevance score.
+
+### Challenge 4: Work Conflict Detection
+
+**Problem**: Detecting overlapping work across multiple platforms (GitHub, Linear) with different data formats and structures.
+
+**Solution**: Built keyword-based matching system that analyzes issues, commits, and tasks across all sources. Normalizes data formats and uses semantic matching to identify potential conflicts.
+
+**Implementation**: Conflict detection logic in `gatherGitHubContext` method of `LangGraphAgent`, comparing proposed work keywords against team members' active work items.
+
+### Challenge 5: Standup Note Generation
+
+**Problem**: Gathering work information from multiple sources and formatting it professionally requires significant time and manual effort.
+
+**Solution**: Created automated pipeline that fetches GitHub issues, Linear tasks, commits, and user context, then formats using Slack Block Kit for professional presentation. Prioritizes user context from JSON files when available.
+
+**Implementation**: `standup_notes` action in `LangGraphAgent` that gathers data for all team members and formats using Slack's Block Kit API.
+
+### Challenge 6: TypeScript Module Resolution
+
+**Problem**: `ts-node` had issues resolving modules like `node-cron` in development mode.
+
+**Solution**: Added `ts-node` configuration to `tsconfig.json` with explicit module resolution settings and compiler options.
+
+**Implementation**: Added `ts-node` section to `tsconfig.json` with `esm: false` and explicit `module: "commonjs"` settings.
+
+### Challenge 7: Intent Classification Accuracy
+
+**Problem**: LLM sometimes misclassified queries, especially for GitHub vs Linear issues (e.g., `#123` vs `SYN-123`).
+
+**Solution**: Enhanced fallback understanding with explicit pattern matching for GitHub issue numbers (`#number`) vs Linear identifiers (`LETTERS-number`). Added priority rules in system prompt.
+
+**Implementation**: Updated `fallbackUnderstanding` in `LLMService` to prioritize GitHub patterns before Linear patterns, and added `IMPORTANT RULES` section to system prompt.
+
+### Challenge 8: Dual-Source Search Default Behavior
+
+**Problem**: General questions should search both GitHub and Linear by default, but the agent was sometimes defaulting to one source.
+
+**Solution**: Modified routing logic to default to `both` for general queries unless explicitly specified. Added keyword detection for "linear" or "github" to override defaults.
+
+**Implementation**: Updated `shouldGatherContext` and `shouldGatherLinear` in `LangGraphAgent` to intelligently route based on keywords and search mode.
+
+### Challenge 9: LLM Hallucination Prevention
+
+**Problem**: When no data was found (e.g., no Linear issues), the LLM would sometimes generate fake information.
+
+**Solution**: Implemented explicit checks to use fallback responses when context is empty for specific actions. Added validation to prevent LLM from generating data when none exists.
+
+**Implementation**: Added checks in `answerQuestionWithContext` to call `generateFallbackResponse` when context is empty for `linear_issues`, `linear_projects`, etc.
+
+### Challenge 10: User Context Prioritization
+
+**Problem**: When asking about specific users (e.g., "What is Beatriz working on?"), the bot would use generic repository info instead of user-specific JSON context.
+
+**Solution**: Built `ContextRouter` to detect user context queries and prioritize JSON files. Added explicit routing to skip GitHub/Linear when pure user context queries are detected.
+
+**Implementation**: `ContextRouter.isPureUserQuery()` and `findUserContext()` methods that detect user names and load JSON context, with routing logic to prioritize JSON over API calls.
+
 ## 📖 API Reference
 
 ### GitHubService Methods
