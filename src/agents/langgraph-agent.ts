@@ -213,6 +213,9 @@ export class LangGraphAgent {
   /**
    * Conditional routing after understanding intent
    */
+  /**
+  * Conditional routing after understanding intent
+  */
   private shouldGatherContext(state: AgentState): string {
     const action = state.intent?.action || 'general';
     const searchMode = state.searchMode;
@@ -222,21 +225,27 @@ export class LangGraphAgent {
       return 'linear_mutation';
     }
 
-    // If no intent or general, go straight to generation
+    // IMPORTANT: Check searchMode FIRST, even for general actions
+    // If user explicitly used /jira, /linear, or /github, honor that
+    if (searchMode === 'jira') {
+      return 'jira_only';
+    } else if (searchMode === 'linear') {
+      return 'linear_only';
+    } else if (searchMode === 'github') {
+      return 'github_only';
+    }
+
+    // If no specific search mode, check action
     if (!state.intent || action === 'general') {
+      // For 'both' mode with general questions, still try to gather context
+      if (searchMode === 'both') {
+        return 'both';
+      }
       return 'generate';
     }
 
-    // Based on search mode
-    if (searchMode === 'github') {
-      return 'github_only';
-    } else if (searchMode === 'linear') {
-      return 'linear_only';
-    } else if (searchMode === 'jira') {
-      return 'jira_only';
-    } else {
-      return 'both';
-    }
+    // Default to 'both' for other actions
+    return 'both';
   }
 
   /**
@@ -455,86 +464,53 @@ export class LangGraphAgent {
     }
 
     const context: any = { ...state.context };
-    const intent = state.intent!;
-    const action = intent.action;
+    const question = state.question.toLowerCase();
 
     try {
-      switch (action) {
-        case 'jira_issues':
-          // Get all recent Jira issues
-          context.jiraIssues = await this.jiraService.getIssues(20);
-          break;
+      // Check for specific issue key (e.g., PROJ-123)
+      const issueKeyMatch = state.question.match(/([A-Z]+-\d+)/);
 
-        case 'jira_my_issues':
-          // Get issues assigned to current user
-          context.jiraIssues = await this.jiraService.getMyIssues(10);
-          break;
-
-        case 'jira_projects':
-          // Get all Jira projects
-          context.jiraProjects = await this.jiraService.getProjects();
-          break;
-
-        case 'jira_search':
-          // Search Jira issues by text
-          if (intent.parameters.jiraSearchTerm) {
-            context.jiraIssues = await this.jiraService.searchIssuesByText(
-              intent.parameters.jiraSearchTerm,
-              20
-            );
-            context.jiraSearchTerm = intent.parameters.jiraSearchTerm;
-          }
-          break;
-
-        case 'jira_status':
-          // Get issues by status
-          if (intent.parameters.jiraStatus) {
-            context.jiraIssues = await this.jiraService.getIssuesByStatus(
-              intent.parameters.jiraStatus,
-              20
-            );
-            context.jiraStatus = intent.parameters.jiraStatus;
-          }
-          break;
-
-        case 'search':
-          // For general searches, also search Jira
-          if (state.question) {
-            context.jiraIssues = await this.jiraService.searchIssuesByText(
-              state.question,
-              20
-            );
-          }
-          break;
-
-        case 'general':
-          // For general questions, try to fetch recent issues
-          if (state.question.toLowerCase().includes('issue') ||
-            state.question.toLowerCase().includes('ticket') ||
-            state.question.toLowerCase().includes('jira')) {
-            context.jiraIssues = await this.jiraService.getIssues(15);
-          }
-          break;
-
-        case 'issues':
-          // For general issues query, also get Jira issues
-          context.jiraIssues = await this.jiraService.getMyIssues(10);
-          break;
-
-        default:
-          // Check if question mentions a specific issue key (e.g., PROJ-123)
-          const issueKeyMatch = state.question.match(/([A-Z]+-\d+)/);
-          if (issueKeyMatch) {
-            console.log(`🔍 Fetching specific Jira issue: ${issueKeyMatch[0]}`);
-            const issue = await this.jiraService.getIssueDetails(issueKeyMatch[0]);
-            if (issue) {
-              context.jiraIssues = [issue];
-            }
-          } else {
-            // Default: get recent issues
-            context.jiraIssues = await this.jiraService.getIssues(15);
-          }
-          break;
+      if (issueKeyMatch) {
+        console.log(`🔍 Fetching specific Jira issue: ${issueKeyMatch[0]}`);
+        const issue = await this.jiraService.getIssueDetails(issueKeyMatch[0]);
+        if (issue) {
+          context.jiraIssues = [issue];
+        }
+      } else if (question.includes('my issue') || question.includes('my ticket')) {
+        // Get issues assigned to current user
+        console.log('🔍 Fetching my Jira issues...');
+        context.jiraIssues = await this.jiraService.getMyIssues(10);
+      } else if (question.includes('project')) {
+        // Get all Jira projects
+        console.log('🔍 Fetching Jira projects...');
+        context.jiraProjects = await this.jiraService.getProjects();
+      } else if (question.includes('status')) {
+        // Try to extract status name
+        const statusMatch = question.match(/status\s+(?:is\s+)?["']?(\w+(?:\s+\w+)*)["']?/i) ||
+          question.match(/in\s+["']?(\w+(?:\s+\w+)*)["']?\s+status/i);
+        if (statusMatch && statusMatch[1]) {
+          console.log(`🔍 Fetching Jira issues with status: ${statusMatch[1]}`);
+          context.jiraIssues = await this.jiraService.getIssuesByStatus(statusMatch[1], 20);
+          context.jiraStatus = statusMatch[1];
+        } else {
+          // Default to all issues if status not specified
+          context.jiraIssues = await this.jiraService.getIssues(15);
+        }
+      } else if (question.includes('search') || question.includes('find')) {
+        // Search Jira issues by text
+        const searchTerm = state.question.replace(/search|find|for|issues?|tickets?|jira/gi, '').trim();
+        if (searchTerm) {
+          console.log(`🔍 Searching Jira for: ${searchTerm}`);
+          context.jiraIssues = await this.jiraService.searchIssuesByText(searchTerm, 15);
+          context.jiraSearchTerm = searchTerm;
+        } else {
+          // No search term, get all issues
+          context.jiraIssues = await this.jiraService.getIssues(15);
+        }
+      } else {
+        // Default: get recent issues
+        console.log('🔍 Fetching recent Jira issues...');
+        context.jiraIssues = await this.jiraService.getIssues(15);
       }
 
       return {
@@ -701,13 +677,89 @@ export class LangGraphAgent {
     }
   }
 
+  private formatJiraResponse(issues: any[], projects: any[] | undefined, question: string): string {
+    if (projects && projects.length > 0) {
+      let response = `📊 *Jira Projects (${projects.length})*\n\n`;
+      projects.forEach((project, index) => {
+        response += `${index + 1}. *${project.key}* - ${project.name}\n`;
+        if (project.description) {
+          response += `   ${project.description}\n`;
+        }
+        response += `\n`;
+      });
+      return response;
+    }
+
+    if (!issues || issues.length === 0) {
+      return '📋 No Jira issues found.';
+    }
+
+    // Check if it's a single issue (detailed view)
+    if (issues.length === 1 && issues[0].key) {
+      const issue = issues[0];
+      const fields = issue.fields;
+      let response = `📋 *${issue.key}*: ${fields.summary}\n\n`;
+      response += `*Type:* ${fields.issuetype?.name || 'Unknown'}\n`;
+      response += `*Status:* ${fields.status?.name || 'Unknown'}\n`;
+      response += `*Priority:* ${fields.priority?.name || 'Unknown'}\n`;
+      response += `*Assignee:* ${fields.assignee?.displayName || 'Unassigned'}\n`;
+      response += `*Created:* ${new Date(fields.created).toLocaleDateString()}\n`;
+      response += `*Updated:* ${new Date(fields.updated).toLocaleDateString()}\n`;
+
+      if (fields.description) {
+        const desc = fields.description.substring(0, 200);
+        response += `\n*Description:*\n${desc}${fields.description.length > 200 ? '...' : ''}\n`;
+      }
+
+      response += `\n🔗 View in Jira: ${this.jiraService!['JIRA_BASE_URL']}/browse/${issue.key}\n`;
+      return response;
+    }
+
+    // Multiple issues (list view)
+    const lowerQuestion = question.toLowerCase();
+    let title = 'Recent Jira Issues';
+
+    if (lowerQuestion.includes('my issue') || lowerQuestion.includes('my ticket')) {
+      title = 'Your Jira Issues';
+    } else if (lowerQuestion.includes('search')) {
+      title = 'Search Results';
+    }
+
+    let response = `📋 *${title} (${issues.length})*\n\n`;
+    issues.forEach((issue, index) => {
+      const fields = issue.fields;
+      response += `${index + 1}. *${issue.key}* - ${fields.summary}\n`;
+      response += `   Status: ${fields.status?.name || 'Unknown'} | `;
+      response += `Assignee: ${fields.assignee?.displayName || 'Unassigned'}\n\n`;
+    });
+
+    return response;
+  }
+
+
   /**
    * Generate final response
    */
+  /**
+  * Generate final response
+  */
   private async generateResponse(state: AgentState): Promise<Partial<AgentState>> {
     console.log('💬 [LangGraph] Generating response...');
 
     try {
+      // If Jira-only mode and we have Jira context, format Jira response
+      if (state.searchMode === 'jira' && (state.context.jiraIssues || state.context.jiraProjects)) {
+        return {
+          response: this.formatJiraResponse(
+            state.context.jiraIssues || [],
+            state.context.jiraProjects,
+            state.question
+          ),
+          step: 'completed',
+          toolsUsed: ['generateResponse'],
+        };
+      }
+
       if (!state.intent) {
         return {
           response: 'I could not understand your question. Please try rephrasing it.',
@@ -736,6 +788,8 @@ export class LangGraphAgent {
       };
     }
   }
+
+
 
   /**
    * Conditional routing after GitHub context
